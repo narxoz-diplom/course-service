@@ -61,13 +61,6 @@
             <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
 
-        <!-- MinIO -->
-        <dependency>
-            <groupId>io.minio</groupId>
-            <artifactId>minio</artifactId>
-            <version>8.5.7</version>
-        </dependency>
-
         <!-- Keycloak Security -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

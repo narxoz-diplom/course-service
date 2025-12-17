@@ -6,20 +6,16 @@ import com.microservices.courseservice.model.Video;
 import com.microservices.courseservice.repository.LessonRepository;
 import com.microservices.courseservice.service.CacheService;
 import com.microservices.courseservice.service.CourseService;
-import com.microservices.courseservice.service.MinioService;
 import com.microservices.courseservice.util.RoleUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.InputStream;
 import java.util.List;
 
 @RestController
@@ -29,7 +25,6 @@ import java.util.List;
 public class CourseController {
 
     private final CourseService courseService;
-    private final MinioService minioService;
     private final LessonRepository lessonRepository;
     private final CacheService cacheService;
 
@@ -227,41 +222,50 @@ public class CourseController {
     }
 
     @PostMapping("/lessons/{lessonId}/videos")
-    public ResponseEntity<Video> uploadVideo(
+    public ResponseEntity<Video> createVideoMetadata(
             @PathVariable Long lessonId,
-            @RequestParam("file") MultipartFile file,
-            @RequestParam("title") String title,
-            @RequestParam(value = "description", required = false) String description,
-            @RequestParam(value = "orderNumber", required = false) Integer orderNumber,
+            @RequestBody VideoMetadataRequest request,
             @AuthenticationPrincipal Jwt jwt) {
         if (!RoleUtil.canUpload(jwt)) {
-            throw new AccessDeniedException("Only TEACHER and ADMIN can upload videos");
+            throw new AccessDeniedException("Only TEACHER and ADMIN can create videos");
         }
         
         try {
-            String objectName = minioService.uploadFile(file);
-            String videoUrl = "/api/courses/videos/" + objectName + "/stream";
-            
+            // Проверяем, что урок существует
             Lesson lesson = lessonRepository.findById(lessonId)
                     .orElseThrow(() -> new RuntimeException("Lesson not found"));
             
+            // Сохраняем только метаданные видео в course-service
+            // Файл уже загружен в file-service через /api/files/upload-video
             Video video = new Video();
-            video.setTitle(title);
-            video.setDescription(description);
-            video.setVideoUrl(videoUrl);
-            video.setObjectName(objectName);
-            video.setFileSize(file.getSize());
-            video.setDuration(0); // TODO: Calculate duration
+            video.setTitle(request.getTitle());
+            video.setDescription(request.getDescription());
+            video.setVideoUrl(request.getVideoUrl());
+            video.setObjectName(request.getObjectName());
+            video.setFileSize(request.getFileSize());
+            video.setDuration(request.getDuration() != null ? request.getDuration() : 0);
             video.setLesson(lesson);
-            video.setOrderNumber(orderNumber != null ? orderNumber : 0);
+            video.setOrderNumber(request.getOrderNumber() != null ? request.getOrderNumber() : 0);
             video.setStatus(Video.VideoStatus.READY);
             
             Video created = courseService.createVideo(video);
             return ResponseEntity.status(HttpStatus.CREATED).body(created);
         } catch (Exception e) {
-            log.error("Error uploading video", e);
+            log.error("Error creating video metadata", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
+    }
+    
+    @lombok.Data
+    static class VideoMetadataRequest {
+        private String title;
+        private String description;
+        private String videoUrl;
+        private String objectName;
+        private Long fileSize;
+        private Integer duration;
+        private Integer orderNumber;
+        private String status;
     }
 
     @GetMapping("/lessons/{lessonId}/videos")
@@ -270,85 +274,6 @@ public class CourseController {
         return ResponseEntity.ok(videos);
     }
 
-    @GetMapping("/videos/{objectName}/stream")
-    public ResponseEntity<InputStreamResource> streamVideo(
-            @PathVariable String objectName,
-            @RequestHeader(value = "Range", required = false) String rangeHeader) {
-        try {
-            // Spring автоматически декодирует path variables
-            // Но если было двойное кодирование, пробуем декодировать еще раз
-            String decodedObjectName = objectName;
-            try {
-                // Пробуем декодировать, если не получится - используем исходное значение
-                String testDecode = java.net.URLDecoder.decode(objectName, java.nio.charset.StandardCharsets.UTF_8);
-                // Если декодирование изменило строку и она не содержит % - значит было кодирование
-                if (!testDecode.equals(objectName) && !testDecode.contains("%")) {
-                    decodedObjectName = testDecode;
-                }
-            } catch (Exception e) {
-                // Если ошибка декодирования - используем исходное значение
-                log.debug("Could not decode objectName, using original: {}", objectName);
-            }
-            
-            // Получаем информацию о файле
-            io.minio.StatObjectResponse statObject = minioService.getFileInfo(decodedObjectName);
-            long fileSize = statObject.size();
-            
-            // Определяем Content-Type из метаданных или по расширению
-            String contentType = statObject.contentType();
-            if (contentType == null || contentType.isEmpty()) {
-                // Пытаемся определить по имени файла
-                String fileName = objectName.toLowerCase();
-                if (fileName.endsWith(".mp4")) {
-                    contentType = "video/mp4";
-                } else if (fileName.endsWith(".webm")) {
-                    contentType = "video/webm";
-                } else if (fileName.endsWith(".ogg")) {
-                    contentType = "video/ogg";
-                } else {
-                    contentType = "video/mp4"; // По умолчанию
-                }
-            }
-            
-            // Обработка Range requests для поддержки стриминга
-            if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
-                String[] ranges = rangeHeader.substring(6).split("-");
-                long rangeStart = Long.parseLong(ranges[0]);
-                long rangeEnd = ranges.length > 1 && !ranges[1].isEmpty() 
-                    ? Long.parseLong(ranges[1]) 
-                    : fileSize - 1;
-                
-                // Проверяем валидность диапазона
-                if (rangeStart < 0 || rangeEnd >= fileSize || rangeStart > rangeEnd) {
-                    return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
-                            .header("Content-Range", "bytes */" + fileSize)
-                            .build();
-                }
-                
-                long contentLength = rangeEnd - rangeStart + 1;
-                InputStream inputStream = minioService.downloadFile(decodedObjectName, rangeStart, contentLength);
-                
-                return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT)
-                        .header("Content-Type", contentType)
-                        .header("Accept-Ranges", "bytes")
-                        .header("Content-Length", String.valueOf(contentLength))
-                        .header("Content-Range", 
-                            String.format("bytes %d-%d/%d", rangeStart, rangeEnd, fileSize))
-                        .body(new org.springframework.core.io.InputStreamResource(inputStream));
-            } else {
-                // Полный файл
-                InputStream inputStream = minioService.downloadFile(decodedObjectName);
-                return ResponseEntity.ok()
-                        .header("Content-Type", contentType)
-                        .header("Accept-Ranges", "bytes")
-                        .header("Content-Length", String.valueOf(fileSize))
-                        .body(new org.springframework.core.io.InputStreamResource(inputStream));
-            }
-        } catch (Exception e) {
-            log.error("Error streaming video: {}", objectName, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
-    }
 
     @PostMapping("/{courseId}/enroll")
     public ResponseEntity<Void> enrollInCourse(
@@ -363,46 +288,6 @@ public class CourseController {
         String viewKey = "course:views:" + id;
         Long views = cacheService.getCounter(viewKey);
         return ResponseEntity.ok(views);
-    }
-
-    @PostMapping("/lessons/{lessonId}/files")
-    public ResponseEntity<Object> uploadFileToLesson(
-            @PathVariable Long lessonId,
-            @RequestParam("file") MultipartFile file,
-            @AuthenticationPrincipal Jwt jwt) {
-        if (!RoleUtil.canUpload(jwt)) {
-            throw new AccessDeniedException("Only TEACHER and ADMIN can upload files to lessons");
-        }
-        try {
-            // Проверяем, что урок существует
-            Lesson lesson = courseService.getLessonById(lessonId);
-            
-            // Используем file-service для загрузки файла
-            // В реальной реализации здесь должен быть вызов file-service через Feign или RestTemplate
-            // Пока возвращаем заглушку
-            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
-                    .body("File upload to lesson should be done through file-service API");
-        } catch (Exception e) {
-            log.error("Error uploading file to lesson: {}", lessonId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
-    }
-
-    @GetMapping("/lessons/{lessonId}/files")
-    public ResponseEntity<Object> getLessonFiles(@PathVariable Long lessonId) {
-        try {
-            // Проверяем, что урок существует
-            Lesson lesson = courseService.getLessonById(lessonId);
-            
-            // Используем file-service для получения файлов
-            // В реальной реализации здесь должен быть вызов file-service через Feign или RestTemplate
-            // Пока возвращаем заглушку
-            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
-                    .body("File retrieval should be done through file-service API");
-        } catch (Exception e) {
-            log.error("Error getting files for lesson: {}", lessonId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
     }
 }
 
