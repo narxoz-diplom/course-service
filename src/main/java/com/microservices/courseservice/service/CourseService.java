@@ -155,6 +155,34 @@ public class CourseService {
     }
 
     @Transactional
+    public void deleteLesson(Long lessonId, Jwt jwt) {
+        lessonService.deleteLesson(lessonId, jwt);
+    }
+
+    @Transactional
+    public void deleteVideo(Long videoId, Jwt jwt) {
+        Video video = videoRepository.findById(videoId)
+                .orElseThrow(() -> new RuntimeException("Video not found with id: " + videoId));
+        
+        Lesson lesson = video.getLesson();
+        if (lesson == null) {
+            throw new RuntimeException("Video lesson not found");
+        }
+        
+        Course course = lesson.getCourse();
+        validateVideoDeletePermission(course, jwt);
+        
+        videoRepository.deleteById(videoId);
+        log.info("Deleted video: {} from lesson: {}", videoId, lesson.getId());
+    }
+
+    private void validateVideoDeletePermission(Course course, Jwt jwt) {
+        if (!RoleUtil.isAdmin(jwt) && !course.getInstructorId().equals(jwt.getSubject())) {
+            throw new AccessDeniedException("Only course instructor or admin can delete video");
+        }
+    }
+
+    @Transactional
     public void enrollStudent(Long courseId, String studentId) {
         Course course = getCourseById(courseId);
         if (!course.getEnrolledStudents().contains(studentId)) {

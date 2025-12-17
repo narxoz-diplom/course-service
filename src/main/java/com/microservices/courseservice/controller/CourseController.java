@@ -113,6 +113,14 @@ public class CourseController {
         return courseService.updateLesson(lessonId, lesson, jwt);
     }
 
+    @DeleteMapping("/lessons/{lessonId}")
+    public ResponseEntity<Void> deleteLesson(
+            @PathVariable Long lessonId,
+            @AuthenticationPrincipal Jwt jwt) {
+        courseService.deleteLesson(lessonId, jwt);
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/lessons/{lessonId}/videos")
     @ResponseStatus(HttpStatus.CREATED)
     public Video createVideoMetadata(
@@ -125,6 +133,15 @@ public class CourseController {
     @GetMapping("/lessons/{lessonId}/videos")
     public List<Video> getVideos(@PathVariable Long lessonId) {
         return courseService.getVideosByLesson(lessonId);
+    }
+
+    @DeleteMapping("/lessons/{lessonId}/videos/{videoId}")
+    public ResponseEntity<Void> deleteVideo(
+            @PathVariable Long lessonId,
+            @PathVariable Long videoId,
+            @AuthenticationPrincipal Jwt jwt) {
+        courseService.deleteVideo(videoId, jwt);
+        return ResponseEntity.noContent().build();
     }
 
 
