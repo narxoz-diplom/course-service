@@ -3,14 +3,20 @@ package com.microservices.courseservice.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.microservices.courseservice.dto.VideoMetadataRequest;
 import com.microservices.courseservice.model.Course;
 import com.microservices.courseservice.model.Lesson;
 import com.microservices.courseservice.model.Video;
 import com.microservices.courseservice.repository.CourseRepository;
 import com.microservices.courseservice.repository.LessonRepository;
 import com.microservices.courseservice.repository.VideoRepository;
+import com.microservices.courseservice.util.RoleUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,35 +52,41 @@ public class CourseService {
     }
 
     @Transactional
-    public Course createCourse(Course course) {
+    public Course createCourse(Course course, Jwt jwt) {
+        if (!RoleUtil.isTeacher(jwt) && !RoleUtil.isAdmin(jwt)) {
+            throw new AccessDeniedException("Only TEACHER and ADMIN can create courses");
+        }
         log.info("Creating course: {} by instructor: {}", course.getTitle(), course.getInstructorId());
         Course created = courseRepository.save(course);
         
-        // Инвалидируем кеш опубликованных курсов
         cacheService.delete("courses:published");
         
         return created;
     }
 
-    // Не используем кеширование, так как Course содержит lazy-связанные сущности (lessons),
-    // которые не могут быть сериализованы в Redis
     public Course getCourseById(Long id) {
         Course course = courseRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Course not found with id: " + id));
-        // Инициализируем lazy коллекции для безопасного доступа
         if (course.getLessons() != null) {
-            course.getLessons().size(); // Force initialization
+            course.getLessons().size();
         }
+
+        String viewKey = "course:views:" + id;
+        cacheService.increment(viewKey, 24, java.util.concurrent.TimeUnit.HOURS);
+
         return course;
     }
 
-    /**
-     * Получить все опубликованные курсы с кешированием в Redis
-     */
+    public List<Course> getAllCourses(Jwt jwt) {
+        if (RoleUtil.isAdmin(jwt) || RoleUtil.isTeacher(jwt)) {
+            return this.getCoursesByInstructor(jwt.getSubject());
+        }
+        return this.getAllPublishedCourses();
+    }
+
     public List<Course> getAllPublishedCourses() {
         String cacheKey = "courses:published";
         
-        // Пытаемся получить из кеша
         String cached = cacheService.get(cacheKey);
         if (cached != null) {
             try {
@@ -85,10 +97,8 @@ public class CourseService {
             }
         }
         
-        // Если нет в кеше, получаем из БД
         List<Course> courses = courseRepository.findByStatus(Course.CourseStatus.PUBLISHED);
         
-        // Сохраняем в кеш на 5 минут
         try {
             String json = objectMapper.writeValueAsString(courses);
             cacheService.set(cacheKey, json, 5, TimeUnit.MINUTES);
@@ -109,35 +119,47 @@ public class CourseService {
     }
 
     @Transactional
-    public Course updateCourse(Long id, Course course) {
+    public Course updateCourse(Long id, Jwt jwt, Course course) {
         Course existing = getCourseById(id);
+        if (!RoleUtil.isAdmin(jwt) && !existing.getInstructorId().equals(jwt.getSubject())) {
+            throw new AccessDeniedException("Only course instructor can update course");
+        }
+
         existing.setTitle(course.getTitle());
         existing.setDescription(course.getDescription());
         existing.setImageUrl(course.getImageUrl());
         existing.setStatus(course.getStatus());
         Course updated = courseRepository.save(existing);
         
-        // Инвалидируем кеш опубликованных курсов
         cacheService.delete("courses:published");
         
         return updated;
     }
 
     @Transactional
-    public void deleteCourse(Long id) {
+    public void deleteCourse(Long id, Jwt jwt) {
+        Course course = this.getCourseById(id);
+        if (!RoleUtil.isAdmin(jwt) && !course.getInstructorId().equals(jwt.getSubject())) {
+            throw new AccessDeniedException("Only course instructor or admin can delete course");
+        }
         courseRepository.deleteById(id);
         
-        // Инвалидируем кеш опубликованных курсов
         cacheService.delete("courses:published");
     }
 
     @Transactional
-    public Lesson createLesson(Lesson lesson) {
+    public Lesson createLesson(Lesson lesson, Long courseId, Jwt jwt) {
+        if (!RoleUtil.isTeacher(jwt) && !RoleUtil.isAdmin(jwt)) {
+            throw new AccessDeniedException("Only TEACHER and ADMIN can create lessons");
+        }
+        Course course = this.getCourseById(courseId);
+        if (!RoleUtil.isAdmin(jwt) && !course.getInstructorId().equals(jwt.getSubject())) {
+            throw new AccessDeniedException("Only course instructor can add lessons");
+        }
+        lesson.setCourse(course);
         log.info("Creating lesson: {} for course: {}", lesson.getTitle(), lesson.getCourse().getId());
         Lesson savedLesson = lessonRepository.save(lesson);
         
-        // Отправляем уведомления всем записанным студентам
-        Course course = lesson.getCourse();
         if (course != null && course.getEnrolledStudents() != null && !course.getEnrolledStudents().isEmpty()) {
             String notificationMessage = String.format(
                 "Новый урок добавлен в курс \"%s\": %s",
@@ -183,8 +205,12 @@ public class CourseService {
     }
 
     @Transactional
-    public Lesson updateLesson(Long lessonId, Lesson lesson) {
+    public Lesson updateLesson(Long lessonId, Lesson lesson, Jwt jwt) {
         Lesson existing = getLessonById(lessonId);
+        Course course = existing.getCourse();
+        if (!RoleUtil.isAdmin(jwt) && !course.getInstructorId().equals(jwt.getSubject())) {
+            throw new AccessDeniedException("Only course instructor or admin can update lesson");
+        }
         existing.setTitle(lesson.getTitle());
         existing.setDescription(lesson.getDescription());
         existing.setContent(lesson.getContent());
@@ -194,9 +220,24 @@ public class CourseService {
     }
 
     @Transactional
-    public Video createVideo(Video video) {
-        log.info("Creating video: {} for lesson: {}", video.getTitle(), video.getLesson().getId());
-        // Если orderNumber не установлен, устанавливаем следующий номер
+    public Video createVideo(VideoMetadataRequest request, Long lessonId, Jwt jwt) {
+        if (!RoleUtil.canUpload(jwt)) {
+            throw new AccessDeniedException("Only TEACHER and ADMIN can create videos");
+        }
+        Lesson lesson = lessonRepository.findById(lessonId)
+                .orElseThrow(() -> new RuntimeException("Lesson not found"));
+
+        Video video = new Video();
+        video.setTitle(request.getTitle());
+        video.setDescription(request.getDescription());
+        video.setVideoUrl(request.getVideoUrl());
+        video.setObjectName(request.getObjectName());
+        video.setFileSize(request.getFileSize());
+        video.setDuration(request.getDuration() != null ? request.getDuration() : 0);
+        video.setLesson(lesson);
+        video.setOrderNumber(request.getOrderNumber() != null ? request.getOrderNumber() : 0);
+        video.setStatus(Video.VideoStatus.READY);
+
         if (video.getOrderNumber() == null || video.getOrderNumber() == 0) {
             List<Video> existingVideos = videoRepository.findByLessonIdOrderByOrderNumber(video.getLesson().getId());
             int nextOrder = existingVideos.isEmpty() ? 1 : existingVideos.get(existingVideos.size() - 1).getOrderNumber() + 1;

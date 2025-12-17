@@ -26,19 +26,19 @@ public class Video {
     private String description;
 
     @Column(nullable = false)
-    private String videoUrl; // URL в MinIO
+    private String videoUrl;
 
     @Column(nullable = false)
-    private String objectName; // Имя объекта в MinIO
+    private String objectName;
 
     @Column(nullable = false)
     private Long fileSize;
 
     @Column(nullable = false)
-    private Integer duration; // Длительность в секундах
+    private Integer duration;
 
     @Column(nullable = false)
-    private Integer orderNumber = 1; // Порядок видео в уроке
+    private Integer orderNumber = 1;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "lesson_id", nullable = false)

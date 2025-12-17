@@ -1,4 +1,4 @@
-package com.microservices.courseservice.controller;
+package com.microservices.courseservice.exception.handler;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;

@@ -40,7 +40,6 @@ keycloak:
   realm: microservices-realm
   jwks-uri: ${KEYCLOAK_JWKS_URI:http://localhost:8080/realms/microservices-realm/protocol/openid-connect/certs}
 
-# File Service URL for Feign client
 file-service:
   url: ${FILE_SERVICE_URL:http://localhost:8081}
 

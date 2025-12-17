@@ -31,7 +31,7 @@ public class Progress {
     private Boolean completed = false;
 
     @Column
-    private Integer watchTime; // Время просмотра в секундах
+    private Integer watchTime;
 
     @Column
     private LocalDateTime lastWatchedAt;

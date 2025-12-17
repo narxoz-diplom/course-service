@@ -14,9 +14,6 @@ public class CacheService {
 
     private final StringRedisTemplate redisTemplate;
 
-    /**
-     * Сохранить значение в кеш с TTL
-     */
     public void set(String key, String value, long timeout, TimeUnit unit) {
         try {
             redisTemplate.opsForValue().set(key, value, timeout, unit);
@@ -26,9 +23,6 @@ public class CacheService {
         }
     }
 
-    /**
-     * Получить значение из кеша
-     */
     public String get(String key) {
         try {
             return redisTemplate.opsForValue().get(key);
@@ -38,9 +32,6 @@ public class CacheService {
         }
     }
 
-    /**
-     * Удалить значение из кеша
-     */
     public void delete(String key) {
         try {
             redisTemplate.delete(key);
@@ -50,9 +41,6 @@ public class CacheService {
         }
     }
 
-    /**
-     * Проверить существование ключа
-     */
     public boolean exists(String key) {
         try {
             return Boolean.TRUE.equals(redisTemplate.hasKey(key));
@@ -62,9 +50,6 @@ public class CacheService {
         }
     }
 
-    /**
-     * Увеличить счетчик
-     */
     public Long increment(String key) {
         try {
             return redisTemplate.opsForValue().increment(key);
@@ -74,9 +59,6 @@ public class CacheService {
         }
     }
 
-    /**
-     * Увеличить счетчик с TTL
-     */
     public Long increment(String key, long timeout, TimeUnit unit) {
         try {
             Long value = redisTemplate.opsForValue().increment(key);
@@ -88,9 +70,6 @@ public class CacheService {
         }
     }
 
-    /**
-     * Получить счетчик
-     */
     public Long getCounter(String key) {
         try {
             String value = redisTemplate.opsForValue().get(key);
