@@ -5,15 +5,12 @@ import com.microservices.courseservice.dto.VideoMetadataRequest;
 import com.microservices.courseservice.model.Course;
 import com.microservices.courseservice.model.Lesson;
 import com.microservices.courseservice.model.Video;
-import com.microservices.courseservice.repository.LessonRepository;
 import com.microservices.courseservice.service.CacheService;
 import com.microservices.courseservice.service.CourseService;
-import com.microservices.courseservice.util.RoleUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
@@ -27,7 +24,6 @@ import java.util.List;
 public class CourseController {
 
     private final CourseService courseService;
-    private final LessonRepository lessonRepository;
     private final CacheService cacheService;
 
     @PostMapping
