@@ -11,6 +11,7 @@ import com.microservices.courseservice.repository.CourseRepository;
 import com.microservices.courseservice.repository.LessonRepository;
 import com.microservices.courseservice.repository.VideoRepository;
 import com.microservices.courseservice.util.RoleUtil;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.http.HttpStatus;
@@ -25,8 +26,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-@Service
 @Slf4j
+@Service
+@RequiredArgsConstructor
 public class CourseService {
 
     private final CourseRepository courseRepository;
@@ -35,21 +37,6 @@ public class CourseService {
     private final CacheService cacheService;
     private final ObjectMapper objectMapper;
     private final RabbitTemplate rabbitTemplate;
-    
-    // Конструктор для инжекции зависимостей
-    public CourseService(CourseRepository courseRepository, 
-                        LessonRepository lessonRepository,
-                        VideoRepository videoRepository,
-                        CacheService cacheService,
-                        ObjectMapper objectMapper,
-                        RabbitTemplate rabbitTemplate) {
-        this.courseRepository = courseRepository;
-        this.lessonRepository = lessonRepository;
-        this.videoRepository = videoRepository;
-        this.cacheService = cacheService;
-        this.objectMapper = objectMapper != null ? objectMapper : new ObjectMapper();
-        this.rabbitTemplate = rabbitTemplate;
-    }
 
     @Transactional
     public Course createCourse(Course course, Jwt jwt) {
