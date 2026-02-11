@@ -35,10 +35,8 @@ spring:
       host: ${SPRING_REDIS_HOST:localhost}
       port: ${SPRING_REDIS_PORT:6379}
 
-keycloak:
-  url: ${KEYCLOAK_URL:http://localhost:8080}
-  realm: microservices-realm
-  jwks-uri: ${KEYCLOAK_JWKS_URI:http://localhost:8080/realms/microservices-realm/protocol/openid-connect/certs}
+jwt:
+  secret: ${JWT_SECRET:your-256-bit-secret-change-in-production-min-32-chars}
 
 file-service:
   url: ${FILE_SERVICE_URL:http://localhost:8081}
