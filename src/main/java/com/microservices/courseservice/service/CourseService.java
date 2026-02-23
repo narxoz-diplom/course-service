@@ -26,6 +26,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -417,11 +418,13 @@ public class CourseService {
     public void updateAllowedEmails(Long courseId, List<String> emails, Jwt jwt) {
         Course course = getCourseById(courseId);
         validateCourseUpdatePermission(course, jwt);
-        course.setAllowedEmails(emails != null ? emails.stream()
-                .map(e -> e != null ? e.toLowerCase().trim() : "")
-                .filter(e -> !e.isBlank())
-                .distinct()
-                .toList() : List.of());
+        List<String> mutableList = emails == null ? new ArrayList<>()
+                : new ArrayList<>(emails.stream()
+                        .map(e -> e != null ? e.toLowerCase().trim() : "")
+                        .filter(e -> !e.isBlank())
+                        .distinct()
+                        .toList());
+        course.setAllowedEmails(mutableList);
         courseRepository.save(course);
     }
 
