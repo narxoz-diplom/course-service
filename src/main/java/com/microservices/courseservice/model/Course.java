@@ -46,10 +46,19 @@ public class Course {
     @JsonManagedReference("course-lessons")
     private List<Lesson> lessons = new ArrayList<>();
 
+    @OneToMany(mappedBy = "course", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonManagedReference("course-tests")
+    private List<Test> tests = new ArrayList<>();
+
     @ElementCollection
     @CollectionTable(name = "course_students", joinColumns = @JoinColumn(name = "course_id"))
     @Column(name = "student_id")
     private List<String> enrolledStudents = new ArrayList<>();
+
+    @ElementCollection
+    @CollectionTable(name = "course_allowed_emails", joinColumns = @JoinColumn(name = "course_id"))
+    @Column(name = "email")
+    private List<String> allowedEmails = new ArrayList<>();
 
     @PrePersist
     protected void onCreate() {

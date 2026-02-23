@@ -41,23 +41,6 @@ public class CacheService {
         }
     }
 
-    public boolean exists(String key) {
-        try {
-            return Boolean.TRUE.equals(redisTemplate.hasKey(key));
-        } catch (Exception e) {
-            log.error("Error checking cache key: {}", key, e);
-            return false;
-        }
-    }
-
-    public Long increment(String key) {
-        try {
-            return redisTemplate.opsForValue().increment(key);
-        } catch (Exception e) {
-            log.error("Error incrementing counter for key: {}", key, e);
-            return null;
-        }
-    }
 
     public Long increment(String key, long timeout, TimeUnit unit) {
         try {

@@ -83,5 +83,18 @@ public class RoleUtil {
         return isAdmin(jwt) || isTeacher(jwt);
     }
 
+    public static boolean canView(Jwt jwt) {
+        return jwt != null;
+    }
+
+    public static String getEmail(Jwt jwt) {
+        if (jwt == null) return null;
+        String email = jwt.getClaimAsString("email");
+        if (email != null && !email.isBlank()) return email.toLowerCase().trim();
+        String preferred = jwt.getClaimAsString("preferred_username");
+        if (preferred != null && preferred.contains("@")) return preferred.toLowerCase().trim();
+        return null;
+    }
+
 }
 

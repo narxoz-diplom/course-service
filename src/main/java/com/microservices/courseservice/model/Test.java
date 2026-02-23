@@ -1,6 +1,5 @@
 package com.microservices.courseservice.model;
 
-import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
@@ -12,11 +11,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "lessons")
+@Table(name = "tests")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class Lesson {
+public class Test {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -25,23 +24,17 @@ public class Lesson {
     @Column(nullable = false)
     private String title;
 
-    @Column(columnDefinition = "TEXT")
-    private String content;
-
-    @Column(length = 5000)
-    private String description;
-
-    @Column(nullable = false)
-    private Integer orderNumber;
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "course_id", nullable = false)
-    @JsonBackReference("course-lessons")
+    @com.fasterxml.jackson.annotation.JsonBackReference("course-tests")
     private Course course;
 
-    @OneToMany(mappedBy = "lesson", cascade = CascadeType.ALL, orphanRemoval = true)
-    @JsonManagedReference("lesson-videos")
-    private List<Video> videos = new ArrayList<>();
+    @Column(nullable = false)
+    private Boolean isVisible = true;
+
+    @OneToMany(mappedBy = "test", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonManagedReference("test-questions")
+    private List<Question> questions = new ArrayList<>();
 
     @Column(nullable = false)
     private LocalDateTime createdAt;
@@ -60,4 +53,3 @@ public class Lesson {
         updatedAt = LocalDateTime.now();
     }
 }
-

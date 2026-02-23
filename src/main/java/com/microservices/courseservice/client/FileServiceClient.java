@@ -23,6 +23,12 @@ public interface FileServiceClient {
     java.util.List<Map<String, Object>> getFilesByLessonId(@PathVariable("lessonId") Long lessonId,
                                                              @RequestHeader("Authorization") String authorization);
 
+    @GetMapping("/api/files/{id}")
+    Map<String, Object> getFileById(@PathVariable("id") Long id);
+
+    @GetMapping("/api/files/course/{courseId}")
+    java.util.List<Map<String, Object>> getFilesByCourseId(@PathVariable("courseId") Long courseId);
+
     @GetMapping("/api/courses/videos/{objectName}/stream")
     org.springframework.core.io.Resource streamVideo(@PathVariable("objectName") String objectName,
                                                       @RequestHeader(value = "Range", required = false) String rangeHeader);

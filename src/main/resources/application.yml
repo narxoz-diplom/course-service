@@ -41,6 +41,14 @@ jwt:
 file-service:
   url: ${FILE_SERVICE_URL:http://localhost:8081}
 
+auth-service:
+  url: ${AUTH_SERVICE_URL:http://localhost:8084}
+
+rag:
+  service:
+    url: ${RAG_SERVICE_URL:http://localhost:8000}
+    api-key: ${RAG_SERVICE_API_KEY:}
+
 management:
   endpoints:
     web:

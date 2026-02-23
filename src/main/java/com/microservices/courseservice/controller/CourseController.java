@@ -52,8 +52,8 @@ public class CourseController {
     }
 
     @GetMapping("/{id}")
-    public Course getCourse(@PathVariable Long id) {
-        return courseService.getCourseById(id);
+    public Course getCourse(@PathVariable Long id, @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getCourseById(id, jwt);
     }
 
     @PutMapping("/{id}")
@@ -91,6 +91,15 @@ public class CourseController {
             @RequestBody Lesson lesson,
             @AuthenticationPrincipal Jwt jwt) {
         return courseService.createLesson(lesson, courseId, jwt);
+    }
+
+    @PostMapping("/{courseId}/lessons/generate-from-files")
+    @ResponseStatus(HttpStatus.CREATED)
+    public List<Lesson> generateLessonsFromFiles(
+            @PathVariable Long courseId,
+            @RequestBody com.microservices.courseservice.dto.GenerateLessonsRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.generateLessonsFromFiles(courseId, request.getFileIds(), jwt);
     }
 
     @GetMapping("/{courseId}/lessons")
@@ -149,8 +158,17 @@ public class CourseController {
     public ResponseEntity<Void> enrollInCourse(
             @PathVariable Long courseId,
             @AuthenticationPrincipal Jwt jwt) {
-        courseService.enrollStudent(courseId, jwt.getSubject());
+        courseService.enrollStudent(courseId, jwt.getSubject(), jwt);
         return ResponseEntity.ok().build();
+    }
+
+    @PutMapping("/{id}/allowed-emails")
+    public ResponseEntity<Course> updateAllowedEmails(
+            @PathVariable Long id,
+            @RequestBody java.util.List<String> emails,
+            @AuthenticationPrincipal Jwt jwt) {
+        courseService.updateAllowedEmails(id, emails, jwt);
+        return ResponseEntity.ok(courseService.getCourseById(id));
     }
 
     @GetMapping("/{id}/views")
@@ -158,5 +176,55 @@ public class CourseController {
         String viewKey = "course:views:" + id;
         return cacheService.getCounter(viewKey);
     }
-}
+
+    @PostMapping("/{courseId}/tests/generate")
+    @ResponseStatus(HttpStatus.CREATED)
+    public com.microservices.courseservice.model.Test generateTest(
+            @PathVariable Long courseId,
+            @RequestBody com.microservices.courseservice.dto.GenerateTestRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.generateTest(courseId,
+                request.getFileIds(),
+                request.getLessonIds(),
+                request.getTitle(),
+                jwt);
+    }
+
+    @GetMapping("/{courseId}/tests")
+    public java.util.List<com.microservices.courseservice.model.Test> getTests(
+            @PathVariable Long courseId) {
+        return courseService.getTestsByCourse(courseId);
+    }
+
+    @GetMapping("/tests/{testId}")
+    public com.microservices.courseservice.model.Test getTest(@PathVariable Long testId) {
+        return courseService.getTestById(testId);
+    }
+
+    @PostMapping("/tests/{testId}/submit")
+    @ResponseStatus(HttpStatus.CREATED)
+    public com.microservices.courseservice.model.TestAttempt submitTest(
+            @PathVariable Long testId,
+            @RequestBody com.microservices.courseservice.dto.SubmitTestRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.submitTestAttempt(
+                testId,
+                jwt.getSubject(),
+                request.getAnswers(),
+                request.getSuspiciousFlag(),
+                jwt);
+    }
+
+    @GetMapping("/{courseId}/test-results")
+    public java.util.List<com.microservices.courseservice.model.TestAttempt> getTestResults(
+            @PathVariable Long courseId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getTestAttemptsByCourse(courseId, jwt);
+    }
+
+    @GetMapping("/my/test-attempts")
+    public java.util.List<com.microservices.courseservice.model.TestAttempt> getMyTestAttempts(
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getMyTestAttempts(jwt.getSubject());
+    }
 
