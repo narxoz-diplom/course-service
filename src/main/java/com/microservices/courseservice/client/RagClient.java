@@ -41,7 +41,11 @@ public class RagClient {
     public List<RagLessonDto> generateLessons(String collectionName, List<Long> fileIds, String prompt) {
         var request = new java.util.HashMap<String, Object>();
         request.put("collection_name", collectionName);
-        request.put("prompt", prompt != null ? prompt : "Создай структурированный курс из нескольких уроков на основе загруженных материалов.");
+        request.put("prompt", prompt != null ? prompt :
+                "Создай структурированный курс из нескольких уроков на основе загруженных материалов. " +
+                "В каждом уроке, где это уместно, добавь 1–3 иллюстрации в виде markdown-картинок с полными https-ссылками на изображения из интернета " +
+                "(формат: ![краткий текст](https://...)). Эти картинки будут показаны ученику внутри текста урока. " +
+                "Если по какому-то фрагменту материала подходящей картинки нет, просто не добавляй её.");
         request.put("top_k", 16);
         if (fileIds != null && !fileIds.isEmpty()) {
             request.put("file_ids", fileIds.stream().map(String::valueOf).toList());
