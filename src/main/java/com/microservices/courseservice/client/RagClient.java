@@ -52,6 +52,18 @@ public class RagClient {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(request)
                 .retrieve()
+                .onStatus(
+                        status -> status.is4xxClientError() || status.is5xxServerError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                                .defaultIfEmpty("")
+                                .map(body -> {
+                                    String message = "RAG generate-lessons failed with status " + clientResponse.statusCode().value();
+                                    if (!body.isBlank()) {
+                                        message += ": " + body;
+                                    }
+                                    return new RagClientException(message);
+                                })
+                )
                 .bodyToMono(RagLessonsResponse.class)
                 .block();
 
@@ -90,6 +102,18 @@ public class RagClient {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(requestBuilder)
                 .retrieve()
+                .onStatus(
+                        status -> status.is4xxClientError() || status.is5xxServerError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                                .defaultIfEmpty("")
+                                .map(body -> {
+                                    String message = "RAG generate-quiz failed with status " + clientResponse.statusCode().value();
+                                    if (!body.isBlank()) {
+                                        message += ": " + body;
+                                    }
+                                    return new RagClientException(message);
+                                })
+                )
                 .bodyToMono(RagQuizResponse.class)
                 .block();
 
@@ -118,6 +142,18 @@ public class RagClient {
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(request)
                 .retrieve()
+                .onStatus(
+                        status -> status.is4xxClientError() || status.is5xxServerError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                                .defaultIfEmpty("")
+                                .map(body -> {
+                                    String message = "RAG vectorize-text failed with status " + clientResponse.statusCode().value();
+                                    if (!body.isBlank()) {
+                                        message += ": " + body;
+                                    }
+                                    return new RagClientException(message);
+                                })
+                )
                 .toBodilessEntity()
                 .block();
     }
