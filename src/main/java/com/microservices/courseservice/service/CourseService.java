@@ -4,6 +4,8 @@ import com.microservices.courseservice.client.AuthServiceClient;
 import com.microservices.courseservice.client.FileServiceClient;
 import com.microservices.courseservice.client.RagClient;
 import com.microservices.courseservice.dto.VideoMetadataRequest;
+import com.microservices.courseservice.dto.RagLessonDto;
+import com.microservices.courseservice.dto.RagQuizQuestionDto;
 import com.microservices.courseservice.mapper.CourseMapper;
 import com.microservices.courseservice.mapper.VideoMapper;
 import com.microservices.courseservice.model.Course;
@@ -201,19 +203,20 @@ public class CourseService {
             filterFileIds = validIds;
         }
 
-        List<Map<String, Object>> ragLessons = ragClient.generateLessons(collectionName, filterFileIds, null);
+        List<RagLessonDto> ragLessons = ragClient.generateLessons(collectionName, filterFileIds, null);
         List<Lesson> created = new java.util.ArrayList<>();
         int order = 1;
-        for (Map<String, Object> rl : ragLessons) {
+        for (RagLessonDto rl : ragLessons) {
             Lesson lesson = new Lesson();
-            lesson.setTitle(getString(rl, "title", "Урок " + order));
-            lesson.setContent(getString(rl, "content", ""));
-            lesson.setDescription(getString(rl, "description", ""));
+            String title = rl.getTitle() != null && !rl.getTitle().isBlank() ? rl.getTitle() : "Урок " + order;
+            lesson.setTitle(title);
+            lesson.setContent(rl.getContent() != null ? rl.getContent() : "");
+            lesson.setDescription(rl.getDescription() != null ? rl.getDescription() : "");
             lesson.setOrderNumber(order++);
             lesson.setCourse(course);
             Lesson saved = lessonService.createLesson(lesson, course, jwt);
             created.add(saved);
-            String content = getString(rl, "content", "");
+            String content = rl.getContent() != null ? rl.getContent() : "";
             if (!content.isBlank()) {
                 try {
                     ragClient.vectorizeText(content, collectionName,
@@ -247,7 +250,7 @@ public class CourseService {
             filterFileIds = validIds;
         }
 
-        List<Map<String, Object>> ragQuestions = ragClient.generateQuiz(collectionName, filterFileIds, lessonIds, null);
+        List<RagQuizQuestionDto> ragQuestions = ragClient.generateQuiz(collectionName, filterFileIds, lessonIds, null);
 
         Test test = new Test();
         test.setTitle(title != null && !title.isBlank() ? title : "Тест по курсу");
@@ -256,15 +259,15 @@ public class CourseService {
         test = testRepository.save(test);
 
         int order = 1;
-        for (Map<String, Object> rq : ragQuestions) {
+        for (RagQuizQuestionDto rq : ragQuestions) {
             Question q = new Question();
             q.setType(Question.QuestionType.MULTIPLE_CHOICE);
-            q.setText(getString(rq, "question", ""));
-            Object opts = rq.get("options");
+            q.setText(rq.getQuestion() != null ? rq.getQuestion() : "");
+            Object opts = rq.getOptions();
             q.setOptions(opts != null ? toJson(opts) : "{}");
-            q.setCorrectAnswer(getString(rq, "correct", ""));
-            q.setExplanation(getString(rq, "explanation", ""));
-            q.setHint(getString(rq, "hint", ""));
+            q.setCorrectAnswer(rq.getCorrect() != null ? rq.getCorrect() : "");
+            q.setExplanation(rq.getExplanation() != null ? rq.getExplanation() : "");
+            q.setHint(rq.getHint() != null ? rq.getHint() : "");
             q.setTest(test);
             q.setOrderNumber(order++);
             questionRepository.save(q);
@@ -278,11 +281,6 @@ public class CourseService {
         } catch (Exception e) {
             return "{}";
         }
-    }
-
-    private static String getString(Map<String, Object> m, String key, String def) {
-        Object v = m.get(key);
-        return v != null ? v.toString() : def;
     }
 
     public List<Lesson> getLessonsByCourse(Long courseId) {

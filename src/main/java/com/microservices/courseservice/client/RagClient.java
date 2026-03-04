@@ -1,5 +1,9 @@
 package com.microservices.courseservice.client;
 
+import com.microservices.courseservice.dto.RagLessonDto;
+import com.microservices.courseservice.dto.RagLessonsResponse;
+import com.microservices.courseservice.dto.RagQuizQuestionDto;
+import com.microservices.courseservice.dto.RagQuizResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -34,8 +38,7 @@ public class RagClient {
      * @param prompt         optional prompt
      * @return list of lessons: [{title, content, description, order}, ...]
      */
-    @SuppressWarnings("unchecked")
-    public List<Map<String, Object>> generateLessons(String collectionName, List<Long> fileIds, String prompt) {
+    public List<RagLessonDto> generateLessons(String collectionName, List<Long> fileIds, String prompt) {
         var request = new java.util.HashMap<String, Object>();
         request.put("collection_name", collectionName);
         request.put("prompt", prompt != null ? prompt : "Создай структурированный курс из нескольких уроков на основе загруженных материалов.");
@@ -44,23 +47,21 @@ public class RagClient {
             request.put("file_ids", fileIds.stream().map(String::valueOf).toList());
         }
 
-        var response = webClient.post()
+        RagLessonsResponse response = webClient.post()
                 .uri("/api/v1/generate-lessons")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(request)
                 .retrieve()
-                .bodyToMono(Map.class)
+                .bodyToMono(RagLessonsResponse.class)
                 .block();
 
         if (response == null) {
-            throw new RuntimeException("RAG generate-lessons returned null");
+            throw new RagClientException("RAG generate-lessons returned null response");
         }
-
-        Object lessonsObj = response.get("lessons");
-        if (lessonsObj instanceof List) {
-            return (List<Map<String, Object>>) lessonsObj;
+        if (response.getLessons() == null) {
+            throw new RagClientException("RAG generate-lessons returned invalid format: 'lessons' field is missing");
         }
-        throw new RuntimeException("RAG generate-lessons returned invalid format");
+        return response.getLessons();
     }
 
     /**
@@ -72,8 +73,7 @@ public class RagClient {
      * @param prompt         optional prompt
      * @return list of questions: [{question, options, correct, explanation, hint}, ...]
      */
-    @SuppressWarnings("unchecked")
-    public List<Map<String, Object>> generateQuiz(String collectionName, List<Long> fileIds, List<Long> lessonIds, String prompt) {
+    public List<RagQuizQuestionDto> generateQuiz(String collectionName, List<Long> fileIds, List<Long> lessonIds, String prompt) {
         var requestBuilder = new java.util.HashMap<String, Object>();
         requestBuilder.put("collection_name", collectionName);
         requestBuilder.put("prompt", prompt != null ? prompt : "Создай тест по загруженным материалам.");
@@ -85,23 +85,21 @@ public class RagClient {
             requestBuilder.put("lesson_ids", lessonIds.stream().map(String::valueOf).toList());
         }
 
-        var response = webClient.post()
+        RagQuizResponse response = webClient.post()
                 .uri("/api/v1/generate-quiz-lms")
                 .contentType(MediaType.APPLICATION_JSON)
                 .bodyValue(requestBuilder)
                 .retrieve()
-                .bodyToMono(Map.class)
+                .bodyToMono(RagQuizResponse.class)
                 .block();
 
         if (response == null) {
-            throw new RuntimeException("RAG generate-quiz returned null");
+            throw new RagClientException("RAG generate-quiz returned null response");
         }
-
-        Object questionsObj = response.get("questions");
-        if (questionsObj instanceof List) {
-            return (List<Map<String, Object>>) questionsObj;
+        if (response.getQuestions() == null) {
+            throw new RagClientException("RAG generate-quiz returned invalid format: 'questions' field is missing");
         }
-        throw new RuntimeException("RAG generate-quiz returned invalid format");
+        return response.getQuestions();
     }
 
     /**
