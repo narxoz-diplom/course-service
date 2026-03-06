@@ -1,5 +1,6 @@
 package com.microservices.courseservice.exception.handler;
 
+import com.microservices.courseservice.exception.QualityGateException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +16,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleAccessDeniedException(AccessDeniedException e) {
         log.error("Access denied: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
+    }
+
+    @ExceptionHandler(QualityGateException.class)
+    public ResponseEntity<String> handleQualityGateException(QualityGateException e) {
+        log.warn("Quality gate failed: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
     }
 
     @ExceptionHandler(RuntimeException.class)

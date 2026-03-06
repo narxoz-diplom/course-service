@@ -18,6 +18,7 @@ import com.microservices.courseservice.repository.QuestionRepository;
 import com.microservices.courseservice.repository.TestAttemptRepository;
 import com.microservices.courseservice.repository.TestRepository;
 import com.microservices.courseservice.repository.VideoRepository;
+import com.microservices.courseservice.exception.QualityGateException;
 import com.microservices.courseservice.util.RoleUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,6 +51,7 @@ public class CourseService {
     private final TestRepository testRepository;
     private final TestAttemptRepository testAttemptRepository;
     private final QuestionRepository questionRepository;
+    private final LessonTestQualityGate qualityGate;
 
 
     @Transactional
@@ -201,15 +203,24 @@ public class CourseService {
             filterFileIds = validIds;
         }
 
+        List<Lesson> existingLessons = lessonService.getLessonsByCourse(courseId);
         List<Map<String, Object>> ragLessons = ragClient.generateLessons(collectionName, filterFileIds, null);
+        List<Map<String, Object>> validated;
+        try {
+            validated = qualityGate.validateAndDeduplicateRagLessons(ragLessons, existingLessons);
+        } catch (QualityGateException e) {
+            log.warn("Quality gate failed for generated lessons, attempting 1 regenerate: {}", e.getMessage());
+            ragLessons = ragClient.generateLessons(collectionName, filterFileIds, null);
+            validated = qualityGate.validateAndDeduplicateRagLessons(ragLessons, existingLessons);
+        }
         List<Lesson> created = new java.util.ArrayList<>();
-        int order = 1;
-        for (Map<String, Object> rl : ragLessons) {
+        for (Map<String, Object> rl : validated) {
+            int orderNum = rl.get("order") instanceof Number n ? n.intValue() : created.size() + 1;
             Lesson lesson = new Lesson();
-            lesson.setTitle(getString(rl, "title", "Урок " + order));
+            lesson.setTitle(getString(rl, "title", "Урок " + orderNum));
             lesson.setContent(getString(rl, "content", ""));
             lesson.setDescription(getString(rl, "description", ""));
-            lesson.setOrderNumber(order++);
+            lesson.setOrderNumber(orderNum);
             lesson.setCourse(course);
             Lesson saved = lessonService.createLesson(lesson, course, jwt);
             created.add(saved);
@@ -218,8 +229,8 @@ public class CourseService {
                 try {
                     ragClient.vectorizeText(content, collectionName,
                             Map.of("lesson_id", String.valueOf(saved.getId()), "course_id", String.valueOf(courseId)));
-                } catch (Exception e) {
-                    log.warn("Failed to vectorize lesson {}: {}", saved.getId(), e.getMessage());
+                } catch (Exception ex) {
+                    log.warn("Failed to vectorize lesson {}: {}", saved.getId(), ex.getMessage());
                 }
             }
         }
@@ -248,6 +259,14 @@ public class CourseService {
         }
 
         List<Map<String, Object>> ragQuestions = ragClient.generateQuiz(collectionName, filterFileIds, lessonIds, null);
+        List<Map<String, Object>> validatedQuestions;
+        try {
+            validatedQuestions = qualityGate.validateAndDeduplicateRagQuestions(ragQuestions);
+        } catch (QualityGateException e) {
+            log.warn("Quality gate failed for generated test questions, attempting 1 regenerate: {}", e.getMessage());
+            ragQuestions = ragClient.generateQuiz(collectionName, filterFileIds, lessonIds, null);
+            validatedQuestions = qualityGate.validateAndDeduplicateRagQuestions(ragQuestions);
+        }
 
         Test test = new Test();
         test.setTitle(title != null && !title.isBlank() ? title : "Тест по курсу");
@@ -256,7 +275,7 @@ public class CourseService {
         test = testRepository.save(test);
 
         int order = 1;
-        for (Map<String, Object> rq : ragQuestions) {
+        for (Map<String, Object> rq : validatedQuestions) {
             Question q = new Question();
             q.setType(Question.QuestionType.MULTIPLE_CHOICE);
             q.setText(getString(rq, "question", ""));
