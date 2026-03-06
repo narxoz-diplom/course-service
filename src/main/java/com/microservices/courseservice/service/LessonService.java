@@ -21,6 +21,7 @@ public class LessonService {
 
     private final LessonRepository lessonRepository;
     private final NotificationProducerService notificationProducerService;
+    private final LessonTestQualityGate qualityGate;
 
     public List<Lesson> getLessonsByCourse(Long courseId) {
         return lessonRepository.findByCourseIdOrderByOrderNumber(courseId);
@@ -34,10 +35,11 @@ public class LessonService {
     @Transactional
     public Lesson createLesson(Lesson lesson, Course course, Jwt jwt) {
         validateLessonCreationPermission(course, jwt);
-        
+        qualityGate.validateLesson(lesson);
+
         lesson.setCourse(course);
         log.info("Creating lesson: {} for course: {}", lesson.getTitle(), course.getId());
-        
+
         Lesson savedLesson = lessonRepository.save(lesson);
         
         sendNewLessonNotifications(course, savedLesson);
@@ -51,13 +53,14 @@ public class LessonService {
         Course course = existing.getCourse();
         
         validateLessonUpdatePermission(course, jwt);
-        
+
         existing.setTitle(lessonUpdate.getTitle());
         existing.setDescription(lessonUpdate.getDescription());
         existing.setContent(lessonUpdate.getContent());
         existing.setOrderNumber(lessonUpdate.getOrderNumber());
         existing.setUpdatedAt(LocalDateTime.now());
-        
+        qualityGate.validateLesson(existing);
+
         return lessonRepository.save(existing);
     }
 
