@@ -155,14 +155,26 @@ public class CourseService {
         validateCourseUpdatePermission(existing, jwt);
 
         Course.CourseStatus oldStatus = existing.getStatus();
-        
         courseMapper.updateCourseFromSource(existing, courseUpdate);
-        
         Course updated = courseRepository.save(existing);
-        
         courseCacheService.invalidateCacheOnStatusChange(oldStatus, updated.getStatus());
         courseCacheService.invalidateCourseCache(id);
-        
+        return updated;
+    }
+
+    @Transactional
+    public Course updateCourseStatus(Long id, Jwt jwt, Course.CourseStatus newStatus) {
+        Course existing = getCourseById(id);
+        validateCourseUpdatePermission(existing, jwt);
+
+        Course.CourseStatus oldStatus = existing.getStatus();
+        existing.setStatus(newStatus);
+
+        Course updated = courseRepository.save(existing);
+
+        courseCacheService.invalidateCacheOnStatusChange(oldStatus, updated.getStatus());
+        courseCacheService.invalidateCourseCache(id);
+
         return updated;
     }
 

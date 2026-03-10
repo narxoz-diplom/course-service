@@ -70,10 +70,8 @@ public class CourseController {
             @PathVariable Long id,
             @RequestBody StatusUpdateRequest request,
             @AuthenticationPrincipal Jwt jwt) {
-        Course existing = courseService.getCourseById(id);
         Course.CourseStatus newStatus = Course.CourseStatus.valueOf(request.getStatus().toUpperCase());
-        existing.setStatus(newStatus);
-        return courseService.updateCourse(id, jwt, existing);
+        return courseService.updateCourseStatus(id, jwt, newStatus);
     }
 
     @DeleteMapping("/{id}")
