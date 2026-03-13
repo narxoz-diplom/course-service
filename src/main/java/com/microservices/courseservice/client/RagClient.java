@@ -9,25 +9,84 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.util.retry.Retry;
 
+import java.net.ConnectException;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeoutException;
 
 @Component
 @Slf4j
 public class RagClient {
 
     private final WebClient webClient;
+    private final Duration timeout;
+    private final int retryMaxAttempts;
+    private final Duration retryFirstBackoff;
 
     public RagClient(
             WebClient.Builder webClientBuilder,
             @Value("${rag.service.url:http://localhost:8000}") String ragServiceUrl,
-            @Value("${rag.service.api-key:}") String apiKey) {
+            @Value("${rag.service.api-key:}") String apiKey,
+            @Value("${rag.service.timeout:90}") int timeoutSeconds,
+            @Value("${rag.service.retry.max-attempts:3}") int retryMaxAttempts,
+            @Value("${rag.service.retry.first-backoff-ms:500}") long retryFirstBackoffMs) {
         WebClient.Builder builder = webClientBuilder.baseUrl(ragServiceUrl);
         if (apiKey != null && !apiKey.isBlank()) {
             builder.defaultHeader("X-API-Key", apiKey);
         }
         this.webClient = builder.build();
+        this.timeout = Duration.ofSeconds(timeoutSeconds);
+        this.retryMaxAttempts = Math.max(1, retryMaxAttempts);
+        this.retryFirstBackoff = Duration.ofMillis(Math.max(0, retryFirstBackoffMs));
+    }
+
+    private static Throwable rootCause(Throwable t) {
+        while (t != null && t.getCause() != null && t.getCause() != t) {
+            t = t.getCause();
+        }
+        return t;
+    }
+
+    /**
+     * Map transient (timeout, connection) and downstream errors to RagClientException
+     * so callers get a consistent error type. 4xx/5xx are already mapped in onStatus.
+     */
+    private static Throwable mapToRagClientException(Throwable t) {
+        if (t instanceof RagClientException) {
+            return t;
+        }
+        Throwable root = rootCause(t);
+        if (root instanceof TimeoutException) {
+            return new RagClientException("RAG request timed out", t);
+        }
+        if (root instanceof ConnectException) {
+            return new RagClientException("RAG service unreachable: " + root.getMessage(), t);
+        }
+        if (t instanceof WebClientResponseException wcre) {
+            String msg = "RAG request failed with status " + wcre.getStatusCode().value();
+            if (wcre.getResponseBodyAsString() != null && !wcre.getResponseBodyAsString().isBlank()) {
+                msg += ": " + wcre.getResponseBodyAsString();
+            }
+            return new RagClientException(msg, t);
+        }
+        return new RagClientException("RAG request failed: " + (t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName()), t);
+    }
+
+    /** Retry only on timeout/connection (transient), not on 4xx/5xx. */
+    private static boolean isTransient(Throwable t) {
+        if (t instanceof RagClientException || t instanceof WebClientResponseException) {
+            return false;
+        }
+        for (Throwable x = t; x != null; x = x.getCause()) {
+            if (x instanceof TimeoutException || x instanceof ConnectException) {
+                return true;
+            }
+        }
+        return t instanceof TimeoutException || t instanceof ConnectException;
     }
 
     /**
@@ -69,6 +128,11 @@ public class RagClient {
                                 })
                 )
                 .bodyToMono(RagLessonsResponse.class)
+                .timeout(timeout)
+                .retryWhen(Retry.backoff(retryMaxAttempts - 1, retryFirstBackoff)
+                        .filter(RagClient::isTransient)
+                        .doBeforeRetry(s -> log.warn("RAG generate-lessons retry attempt {} after: {}", s.totalRetries() + 1, s.failure().getMessage())))
+                .onErrorMap(RagClient::mapToRagClientException)
                 .block();
 
         if (response == null) {
@@ -119,6 +183,11 @@ public class RagClient {
                                 })
                 )
                 .bodyToMono(RagQuizResponse.class)
+                .timeout(timeout)
+                .retryWhen(Retry.backoff(retryMaxAttempts - 1, retryFirstBackoff)
+                        .filter(RagClient::isTransient)
+                        .doBeforeRetry(s -> log.warn("RAG generate-quiz retry attempt {} after: {}", s.totalRetries() + 1, s.failure().getMessage())))
+                .onErrorMap(RagClient::mapToRagClientException)
                 .block();
 
         if (response == null) {
@@ -159,6 +228,11 @@ public class RagClient {
                                 })
                 )
                 .toBodilessEntity()
+                .timeout(timeout)
+                .retryWhen(Retry.backoff(retryMaxAttempts - 1, retryFirstBackoff)
+                        .filter(RagClient::isTransient)
+                        .doBeforeRetry(s -> log.warn("RAG vectorize-text retry attempt {} after: {}", s.totalRetries() + 1, s.failure().getMessage())))
+                .onErrorMap(RagClient::mapToRagClientException)
                 .block();
     }
 }

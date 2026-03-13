@@ -48,6 +48,11 @@ rag:
   service:
     url: ${RAG_SERVICE_URL:http://localhost:8000}
     api-key: ${RAG_SERVICE_API_KEY:}
+    # Resilience: timeout (seconds) and retry for RAG HTTP calls
+    timeout: ${RAG_SERVICE_TIMEOUT:90}
+    retry:
+      max-attempts: ${RAG_SERVICE_RETRY_MAX_ATTEMPTS:3}
+      first-backoff-ms: ${RAG_SERVICE_RETRY_FIRST_BACKOFF_MS:500}
 
 management:
   endpoints:
