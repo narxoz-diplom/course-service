@@ -4,6 +4,8 @@ import com.microservices.courseservice.client.AuthServiceClient;
 import com.microservices.courseservice.client.FileServiceClient;
 import com.microservices.courseservice.client.RagClient;
 import com.microservices.courseservice.dto.VideoMetadataRequest;
+import com.microservices.courseservice.dto.RagLessonDto;
+import com.microservices.courseservice.dto.RagQuizQuestionDto;
 import com.microservices.courseservice.mapper.CourseMapper;
 import com.microservices.courseservice.mapper.VideoMapper;
 import com.microservices.courseservice.model.Course;
@@ -18,7 +20,6 @@ import com.microservices.courseservice.repository.QuestionRepository;
 import com.microservices.courseservice.repository.TestAttemptRepository;
 import com.microservices.courseservice.repository.TestRepository;
 import com.microservices.courseservice.repository.VideoRepository;
-import com.microservices.courseservice.exception.QualityGateException;
 import com.microservices.courseservice.util.RoleUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,7 +52,6 @@ public class CourseService {
     private final TestRepository testRepository;
     private final TestAttemptRepository testAttemptRepository;
     private final QuestionRepository questionRepository;
-    private final LessonTestQualityGate qualityGate;
 
 
     @Transactional
@@ -155,14 +155,26 @@ public class CourseService {
         validateCourseUpdatePermission(existing, jwt);
 
         Course.CourseStatus oldStatus = existing.getStatus();
-        
         courseMapper.updateCourseFromSource(existing, courseUpdate);
-        
         Course updated = courseRepository.save(existing);
-        
         courseCacheService.invalidateCacheOnStatusChange(oldStatus, updated.getStatus());
         courseCacheService.invalidateCourseCache(id);
-        
+        return updated;
+    }
+
+    @Transactional
+    public Course updateCourseStatus(Long id, Jwt jwt, Course.CourseStatus newStatus) {
+        Course existing = getCourseById(id);
+        validateCourseUpdatePermission(existing, jwt);
+
+        Course.CourseStatus oldStatus = existing.getStatus();
+        existing.setStatus(newStatus);
+
+        Course updated = courseRepository.save(existing);
+
+        courseCacheService.invalidateCacheOnStatusChange(oldStatus, updated.getStatus());
+        courseCacheService.invalidateCourseCache(id);
+
         return updated;
     }
 
@@ -203,34 +215,26 @@ public class CourseService {
             filterFileIds = validIds;
         }
 
-        List<Lesson> existingLessons = lessonService.getLessonsByCourse(courseId);
-        List<Map<String, Object>> ragLessons = ragClient.generateLessons(collectionName, filterFileIds, null);
-        List<Map<String, Object>> validated;
-        try {
-            validated = qualityGate.validateAndDeduplicateRagLessons(ragLessons, existingLessons);
-        } catch (QualityGateException e) {
-            log.warn("Quality gate failed for generated lessons, attempting 1 regenerate: {}", e.getMessage());
-            ragLessons = ragClient.generateLessons(collectionName, filterFileIds, null);
-            validated = qualityGate.validateAndDeduplicateRagLessons(ragLessons, existingLessons);
-        }
+        List<RagLessonDto> ragLessons = ragClient.generateLessons(collectionName, filterFileIds, null);
         List<Lesson> created = new java.util.ArrayList<>();
-        for (Map<String, Object> rl : validated) {
-            int orderNum = rl.get("order") instanceof Number n ? n.intValue() : created.size() + 1;
+        int order = 1;
+        for (RagLessonDto rl : ragLessons) {
             Lesson lesson = new Lesson();
-            lesson.setTitle(getString(rl, "title", "Урок " + orderNum));
-            lesson.setContent(getString(rl, "content", ""));
-            lesson.setDescription(getString(rl, "description", ""));
-            lesson.setOrderNumber(orderNum);
+            String title = rl.getTitle() != null && !rl.getTitle().isBlank() ? rl.getTitle() : "Урок " + order;
+            lesson.setTitle(title);
+            lesson.setContent(rl.getContent() != null ? rl.getContent() : "");
+            lesson.setDescription(rl.getDescription() != null ? rl.getDescription() : "");
+            lesson.setOrderNumber(order++);
             lesson.setCourse(course);
             Lesson saved = lessonService.createLesson(lesson, course, jwt);
             created.add(saved);
-            String content = getString(rl, "content", "");
+            String content = rl.getContent() != null ? rl.getContent() : "";
             if (!content.isBlank()) {
                 try {
                     ragClient.vectorizeText(content, collectionName,
                             Map.of("lesson_id", String.valueOf(saved.getId()), "course_id", String.valueOf(courseId)));
-                } catch (Exception ex) {
-                    log.warn("Failed to vectorize lesson {}: {}", saved.getId(), ex.getMessage());
+                } catch (Exception e) {
+                    log.warn("Failed to vectorize lesson {}: {}", saved.getId(), e.getMessage());
                 }
             }
         }
@@ -258,15 +262,7 @@ public class CourseService {
             filterFileIds = validIds;
         }
 
-        List<Map<String, Object>> ragQuestions = ragClient.generateQuiz(collectionName, filterFileIds, lessonIds, null);
-        List<Map<String, Object>> validatedQuestions;
-        try {
-            validatedQuestions = qualityGate.validateAndDeduplicateRagQuestions(ragQuestions);
-        } catch (QualityGateException e) {
-            log.warn("Quality gate failed for generated test questions, attempting 1 regenerate: {}", e.getMessage());
-            ragQuestions = ragClient.generateQuiz(collectionName, filterFileIds, lessonIds, null);
-            validatedQuestions = qualityGate.validateAndDeduplicateRagQuestions(ragQuestions);
-        }
+        List<RagQuizQuestionDto> ragQuestions = ragClient.generateQuiz(collectionName, filterFileIds, lessonIds, null);
 
         Test test = new Test();
         test.setTitle(title != null && !title.isBlank() ? title : "Тест по курсу");
@@ -275,15 +271,15 @@ public class CourseService {
         test = testRepository.save(test);
 
         int order = 1;
-        for (Map<String, Object> rq : validatedQuestions) {
+        for (RagQuizQuestionDto rq : ragQuestions) {
             Question q = new Question();
             q.setType(Question.QuestionType.MULTIPLE_CHOICE);
-            q.setText(getString(rq, "question", ""));
-            Object opts = rq.get("options");
+            q.setText(rq.getQuestion() != null ? rq.getQuestion() : "");
+            Object opts = rq.getOptions();
             q.setOptions(opts != null ? toJson(opts) : "{}");
-            q.setCorrectAnswer(getString(rq, "correct", ""));
-            q.setExplanation(getString(rq, "explanation", ""));
-            q.setHint(getString(rq, "hint", ""));
+            q.setCorrectAnswer(rq.getCorrect() != null ? rq.getCorrect() : "");
+            q.setExplanation(rq.getExplanation() != null ? rq.getExplanation() : "");
+            q.setHint(rq.getHint() != null ? rq.getHint() : "");
             q.setTest(test);
             q.setOrderNumber(order++);
             questionRepository.save(q);
@@ -297,11 +293,6 @@ public class CourseService {
         } catch (Exception e) {
             return "{}";
         }
-    }
-
-    private static String getString(Map<String, Object> m, String key, String def) {
-        Object v = m.get(key);
-        return v != null ? v.toString() : def;
     }
 
     public List<Lesson> getLessonsByCourse(Long courseId) {
