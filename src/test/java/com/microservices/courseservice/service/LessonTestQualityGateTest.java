@@ -1,12 +1,14 @@
 package com.microservices.courseservice.service;
 
+import com.microservices.courseservice.dto.RagLessonDto;
+import com.microservices.courseservice.dto.RagQuizQuestionDto;
 import com.microservices.courseservice.exception.QualityGateException;
 import com.microservices.courseservice.model.Course;
 import com.microservices.courseservice.model.Lesson;
+import com.microservices.courseservice.model.Question;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -71,55 +73,96 @@ class LessonTestQualityGateTest {
                 .hasMessageContaining("orderNumber");
     }
 
+    private static RagLessonDto ragLesson(String title, String content) {
+        RagLessonDto dto = new RagLessonDto();
+        dto.setTitle(title);
+        dto.setContent(content);
+        return dto;
+    }
+
     @Test
     void validateAndDeduplicateRagLessons_returnsDedupedAndOrdered() {
-        List<Map<String, Object>> input = List.of(
-                Map.of("title", "Lesson One", "content", "Content for lesson one that is long enough to pass validation."),
-                Map.of("title", "Lesson Two", "content", "Content for lesson two that is long enough to pass validation.")
+        List<RagLessonDto> input = List.of(
+                ragLesson("Lesson One", "Content for lesson one that is long enough to pass validation."),
+                ragLesson("Lesson Two", "Content for lesson two that is long enough to pass validation.")
         );
-        List<Map<String, Object>> result = qualityGate.validateAndDeduplicateRagLessons(input, List.of());
+        List<RagLessonDto> result = qualityGate.validateAndDeduplicateRagLessons(input, List.of());
         assertThat(result).hasSize(2);
-        assertThat(result.get(0).get("order")).isEqualTo(1);
-        assertThat(result.get(1).get("order")).isEqualTo(2);
+        assertThat(result.get(0).getOrder()).isEqualTo(1);
+        assertThat(result.get(1).getOrder()).isEqualTo(2);
     }
 
     @Test
     void validateAndDeduplicateRagLessons_removesDuplicatesByTitle() {
-        List<Map<String, Object>> input = List.of(
-                Map.of("title", "Same Title", "content", "Content one that is long enough to pass the minimum length."),
-                Map.of("title", "Same Title", "content", "Content two that is long enough to pass the minimum length.")
+        List<RagLessonDto> input = List.of(
+                ragLesson("Same Title", "Content one that is long enough to pass the minimum length."),
+                ragLesson("Same Title", "Content two that is long enough to pass the minimum length.")
         );
-        List<Map<String, Object>> result = qualityGate.validateAndDeduplicateRagLessons(input, List.of());
+        List<RagLessonDto> result = qualityGate.validateAndDeduplicateRagLessons(input, List.of());
         assertThat(result).hasSize(1);
     }
 
     @Test
     void validateAndDeduplicateRagLessons_throwsWhenAllFilteredOut() {
-        List<Map<String, Object>> input = List.of(
-                Map.of("title", "A", "content", "short")
-        );
+        List<RagLessonDto> input = List.of(ragLesson("A", "short"));
         assertThatThrownBy(() -> qualityGate.validateAndDeduplicateRagLessons(input, List.of()))
                 .isInstanceOf(QualityGateException.class)
                 .hasMessageContaining("No lessons passed");
     }
 
+    private static RagQuizQuestionDto ragQuestion(String question, String correct) {
+        RagQuizQuestionDto dto = new RagQuizQuestionDto();
+        dto.setQuestion(question);
+        dto.setCorrect(correct);
+        return dto;
+    }
+
     @Test
     void validateAndDeduplicateRagQuestions_returnsDeduped() {
-        List<Map<String, Object>> input = List.of(
-                Map.of("question", "First question with enough text?", "correct", "Yes"),
-                Map.of("question", "Second question with enough text?", "correct", "No")
+        List<RagQuizQuestionDto> input = List.of(
+                ragQuestion("First question with enough text?", "Yes"),
+                ragQuestion("Second question with enough text?", "No")
         );
-        List<Map<String, Object>> result = qualityGate.validateAndDeduplicateRagQuestions(input);
+        List<RagQuizQuestionDto> result = qualityGate.validateAndDeduplicateRagQuestions(input);
         assertThat(result).hasSize(2);
     }
 
     @Test
     void validateAndDeduplicateRagQuestions_throwsWhenNoValidQuestions() {
-        List<Map<String, Object>> input = List.of(
-                Map.of("question", "short", "correct", "")
-        );
+        List<RagQuizQuestionDto> input = List.of(ragQuestion("short", ""));
         assertThatThrownBy(() -> qualityGate.validateAndDeduplicateRagQuestions(input))
                 .isInstanceOf(QualityGateException.class)
                 .hasMessageContaining("No questions passed");
+    }
+
+    @Test
+    void validateQuestion_acceptsValidQuestion() {
+        Question q = new Question();
+        q.setText("Valid question text here?");
+        q.setCorrectAnswer("Yes");
+        q.setOrderNumber(1);
+        qualityGate.validateQuestion(q);
+    }
+
+    @Test
+    void validateQuestion_throwsWhenTextTooShort() {
+        Question q = new Question();
+        q.setText("short");
+        q.setCorrectAnswer("A");
+        q.setOrderNumber(1);
+        assertThatThrownBy(() -> qualityGate.validateQuestion(q))
+                .isInstanceOf(QualityGateException.class)
+                .hasMessageContaining("text");
+    }
+
+    @Test
+    void validateQuestion_throwsWhenOrderInvalid() {
+        Question q = new Question();
+        q.setText("Valid question text here?");
+        q.setCorrectAnswer("Yes");
+        q.setOrderNumber(0);
+        assertThatThrownBy(() -> qualityGate.validateQuestion(q))
+                .isInstanceOf(QualityGateException.class)
+                .hasMessageContaining("orderNumber");
     }
 }

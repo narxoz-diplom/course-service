@@ -1,21 +1,18 @@
 package com.microservices.courseservice.service;
 
-import com.microservices.courseservice.exception.QualityGateException;
-import com.microservices.courseservice.model.Course;
-import com.microservices.courseservice.model.Lesson;
-import com.microservices.courseservice.repository.CourseRepository;
-import com.microservices.courseservice.repository.LessonRepository;
-import com.microservices.courseservice.repository.QuestionRepository;
-import com.microservices.courseservice.repository.TestAttemptRepository;
-import com.microservices.courseservice.repository.TestRepository;
 import com.microservices.courseservice.client.AuthServiceClient;
 import com.microservices.courseservice.client.FileServiceClient;
 import com.microservices.courseservice.client.RagClient;
+import com.microservices.courseservice.dto.RagLessonDto;
+import com.microservices.courseservice.dto.RagQuizQuestionDto;
+import com.microservices.courseservice.exception.QualityGateException;
 import com.microservices.courseservice.mapper.CourseMapper;
 import com.microservices.courseservice.mapper.VideoMapper;
-import com.microservices.courseservice.repository.VideoRepository;
+import com.microservices.courseservice.model.Course;
+import com.microservices.courseservice.model.Lesson;
+import  com.microservices.courseservice.model.Test;
+import com.microservices.courseservice.repository.*;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -30,10 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 /**
  * Unit tests for CourseService quality-gate integration: validation before save, 1 regenerate on fail.
@@ -80,18 +74,26 @@ class CourseServiceQualityGateTest {
         when(jwt.getClaim("realm_access")).thenReturn(realmAccess);
     }
 
-    @Test
+    private static RagLessonDto ragLesson(String title, String content, Integer order) {
+        RagLessonDto dto = new RagLessonDto();
+        dto.setTitle(title);
+        dto.setContent(content);
+        dto.setOrder(order);
+        return dto;
+    }
+
+    @org.junit.jupiter.api.Test
     void generateLessonsFromFiles_usesQualityGateAndSavesValidLessons() {
         when(courseRepository.findById(1L)).thenReturn(Optional.of(course));
         when(lessonService.getLessonsByCourse(1L)).thenReturn(List.of());
-        List<Map<String, Object>> ragLessons = List.of(
-                Map.of("title", "Lesson One", "content", "Content that is long enough to pass the minimum length for lessons."),
-                Map.of("title", "Lesson Two", "content", "Another content that is long enough to pass the minimum length.")
+        List<RagLessonDto> ragLessons = List.of(
+                ragLesson("Lesson One", "Content that is long enough to pass the minimum length for lessons.", null),
+                ragLesson("Lesson Two", "Another content that is long enough to pass the minimum length.", null)
         );
         when(ragClient.generateLessons(eq("course_1"), eq(null), eq(null))).thenReturn(ragLessons);
-        List<Map<String, Object>> validated = List.of(
-                Map.of("title", "Lesson One", "content", "Content that is long enough to pass the minimum length for lessons.", "order", 1),
-                Map.of("title", "Lesson Two", "content", "Another content that is long enough to pass the minimum length.", "order", 2)
+        List<RagLessonDto> validated = List.of(
+                ragLesson("Lesson One", "Content that is long enough to pass the minimum length for lessons.", 1),
+                ragLesson("Lesson Two", "Another content that is long enough to pass the minimum length.", 2)
         );
         when(qualityGate.validateAndDeduplicateRagLessons(ragLessons, List.of())).thenReturn(validated);
         Lesson saved1 = new Lesson();
@@ -109,19 +111,19 @@ class CourseServiceQualityGateTest {
         assertThat(result.get(1).getId()).isEqualTo(11L);
     }
 
-    @Test
+    @org.junit.jupiter.api.Test
     void generateLessonsFromFiles_regeneratesOnceWhenQualityGateFailsFirstTime() {
         when(courseRepository.findById(1L)).thenReturn(Optional.of(course));
         when(lessonService.getLessonsByCourse(1L)).thenReturn(List.of());
-        List<Map<String, Object>> firstRag = List.of(Map.of("title", "A", "content", "short"));
-        List<Map<String, Object>> secondRag = List.of(
-                Map.of("title", "Good Lesson", "content", "Content that is long enough to pass the minimum length for lessons.")
+        List<RagLessonDto> firstRag = List.of(ragLesson("A", "short", null));
+        List<RagLessonDto> secondRag = List.of(
+                ragLesson("Good Lesson", "Content that is long enough to pass the minimum length for lessons.", null)
         );
         when(ragClient.generateLessons(eq("course_1"), eq(null), eq(null))).thenReturn(firstRag).thenReturn(secondRag);
         when(qualityGate.validateAndDeduplicateRagLessons(firstRag, List.of()))
                 .thenThrow(new QualityGateException("No lessons passed"));
-        List<Map<String, Object>> validated = List.of(
-                Map.of("title", "Good Lesson", "content", "Content that is long enough to pass the minimum length for lessons.", "order", 1)
+        List<RagLessonDto> validated = List.of(
+                ragLesson("Good Lesson", "Content that is long enough to pass the minimum length for lessons.", 1)
         );
         when(qualityGate.validateAndDeduplicateRagLessons(secondRag, List.of())).thenReturn(validated);
         Lesson saved = new Lesson();
@@ -136,11 +138,11 @@ class CourseServiceQualityGateTest {
         assertThat(result).hasSize(1);
     }
 
-    @Test
+    @org.junit.jupiter.api.Test
     void generateLessonsFromFiles_throwsWhenQualityGateFailsAfterRegenerate() {
         when(courseRepository.findById(1L)).thenReturn(Optional.of(course));
         when(lessonService.getLessonsByCourse(1L)).thenReturn(List.of());
-        List<Map<String, Object>> badRag = List.of(Map.of("title", "A", "content", "short"));
+        List<RagLessonDto> badRag = List.of(ragLesson("A", "short", null));
         when(ragClient.generateLessons(eq("course_1"), eq(null), eq(null))).thenReturn(badRag);
         when(qualityGate.validateAndDeduplicateRagLessons(any(), any()))
                 .thenThrow(new QualityGateException("No lessons passed"));
@@ -151,5 +153,78 @@ class CourseServiceQualityGateTest {
 
         verify(ragClient, times(2)).generateLessons(eq("course_1"), eq(null), eq(null));
         verify(lessonService, never()).createLesson(any(), any(), any());
+    }
+
+    private static RagQuizQuestionDto ragQuestion(String question, String correct) {
+        RagQuizQuestionDto dto = new RagQuizQuestionDto();
+        dto.setQuestion(question);
+        dto.setCorrect(correct);
+        return dto;
+    }
+
+    @org.junit.jupiter.api.Test
+    void generateTest_usesQualityGateAndSavesValidQuestions() {
+        when(courseRepository.findById(1L)).thenReturn(Optional.of(course));
+        List<RagQuizQuestionDto> ragQuestions = List.of(
+                ragQuestion("First question with enough text?", "Yes"),
+                ragQuestion("Second question with enough text?", "No")
+        );
+        when(ragClient.generateQuiz(eq("course_1"), eq(null), eq(null), eq(null))).thenReturn(ragQuestions);
+        List<RagQuizQuestionDto> validated = List.of(
+                ragQuestion("First question with enough text?", "Yes"),
+                ragQuestion("Second question with enough text?", "No")
+        );
+        when(qualityGate.validateAndDeduplicateRagQuestions(ragQuestions)).thenReturn(validated);
+        when(testRepository.save(any(Test.class))).thenAnswer(inv -> {
+            Test t = inv.getArgument(0);
+            t.setId(100L);
+            return t;
+        });
+
+        Test result = courseService.generateTest(1L, null, null, "Test Title", jwt);
+
+        verify(qualityGate, times(1)).validateAndDeduplicateRagQuestions(ragQuestions);
+        verify(questionRepository, times(2)).save(any());
+        assertThat(result.getId()).isEqualTo(100L);
+        assertThat(result.getTitle()).isEqualTo("Test Title");
+    }
+
+    @org.junit.jupiter.api.Test
+    void generateTest_regeneratesOnceWhenQualityGateFailsFirstTime() {
+        when(courseRepository.findById(1L)).thenReturn(Optional.of(course));
+        List<RagQuizQuestionDto> firstRag = List.of(ragQuestion("short", ""));
+        List<RagQuizQuestionDto> secondRag = List.of(ragQuestion("Valid question with enough text?", "A"));
+        when(ragClient.generateQuiz(eq("course_1"), eq(null), eq(null), eq(null))).thenReturn(firstRag).thenReturn(secondRag);
+        when(qualityGate.validateAndDeduplicateRagQuestions(firstRag))
+                .thenThrow(new QualityGateException("No questions passed"));
+        when(qualityGate.validateAndDeduplicateRagQuestions(secondRag)).thenReturn(secondRag);
+        when(testRepository.save(any(Test.class))).thenAnswer(inv -> {
+            Test t = inv.getArgument(0);
+            t.setId(100L);
+            return t;
+        });
+
+        Test result = courseService.generateTest(1L, null, null, "Quiz", jwt);
+
+        verify(ragClient, times(2)).generateQuiz(eq("course_1"), eq(null), eq(null), eq(null));
+        verify(qualityGate, times(1)).validateAndDeduplicateRagQuestions(firstRag);
+        verify(qualityGate, times(1)).validateAndDeduplicateRagQuestions(secondRag);
+        assertThat(result.getId()).isEqualTo(100L);
+    }
+
+    @org.junit.jupiter.api.Test
+    void generateTest_throwsWhenQualityGateFailsAfterRegenerate() {
+        when(courseRepository.findById(1L)).thenReturn(Optional.of(course));
+        List<RagQuizQuestionDto> badQuestions = List.of(ragQuestion("short", ""));
+        when(ragClient.generateQuiz(eq("course_1"), eq(null), eq(null), eq(null))).thenReturn(badQuestions);
+        when(qualityGate.validateAndDeduplicateRagQuestions(any()))
+                .thenThrow(new QualityGateException("No questions passed"));
+
+        assertThatThrownBy(() -> courseService.generateTest(1L, null, null, "Quiz", jwt))
+                .isInstanceOf(QualityGateException.class)
+                .hasMessageContaining("No questions passed");
+
+        verify(ragClient, times(2)).generateQuiz(eq("course_1"), eq(null), eq(null), eq(null));
+        verify(testRepository, never()).save(any());
     }
 }

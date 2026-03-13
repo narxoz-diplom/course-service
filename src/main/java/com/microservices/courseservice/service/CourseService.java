@@ -3,23 +3,14 @@ package com.microservices.courseservice.service;
 import com.microservices.courseservice.client.AuthServiceClient;
 import com.microservices.courseservice.client.FileServiceClient;
 import com.microservices.courseservice.client.RagClient;
-import com.microservices.courseservice.dto.VideoMetadataRequest;
 import com.microservices.courseservice.dto.RagLessonDto;
 import com.microservices.courseservice.dto.RagQuizQuestionDto;
+import com.microservices.courseservice.dto.VideoMetadataRequest;
+import com.microservices.courseservice.exception.QualityGateException;
 import com.microservices.courseservice.mapper.CourseMapper;
 import com.microservices.courseservice.mapper.VideoMapper;
-import com.microservices.courseservice.model.Course;
-import com.microservices.courseservice.model.Lesson;
-import com.microservices.courseservice.model.Question;
-import com.microservices.courseservice.model.Test;
-import com.microservices.courseservice.model.TestAttempt;
-import com.microservices.courseservice.model.Video;
-import com.microservices.courseservice.repository.CourseRepository;
-import com.microservices.courseservice.repository.LessonRepository;
-import com.microservices.courseservice.repository.QuestionRepository;
-import com.microservices.courseservice.repository.TestAttemptRepository;
-import com.microservices.courseservice.repository.TestRepository;
-import com.microservices.courseservice.repository.VideoRepository;
+import com.microservices.courseservice.model.*;
+import com.microservices.courseservice.repository.*;
 import com.microservices.courseservice.util.RoleUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,7 +43,7 @@ public class CourseService {
     private final TestRepository testRepository;
     private final TestAttemptRepository testAttemptRepository;
     private final QuestionRepository questionRepository;
-
+    private final LessonTestQualityGate qualityGate;
 
     @Transactional
     public Course createCourse(Course course, Jwt jwt) {
@@ -215,16 +206,19 @@ public class CourseService {
             filterFileIds = validIds;
         }
 
+        List<Lesson> existingLessons = lessonService.getLessonsByCourse(courseId);
         List<RagLessonDto> ragLessons = ragClient.generateLessons(collectionName, filterFileIds, null);
-        List<Lesson> created = new java.util.ArrayList<>();
+        List<RagLessonDto> validatedLessons = validateLessonsWithRetry(collectionName, filterFileIds, ragLessons, existingLessons);
+
+        List<Lesson> created = new ArrayList<>();
         int order = 1;
-        for (RagLessonDto rl : ragLessons) {
+        for (RagLessonDto rl : validatedLessons) {
             Lesson lesson = new Lesson();
             String title = rl.getTitle() != null && !rl.getTitle().isBlank() ? rl.getTitle() : "Урок " + order;
             lesson.setTitle(title);
             lesson.setContent(rl.getContent() != null ? rl.getContent() : "");
             lesson.setDescription(rl.getDescription() != null ? rl.getDescription() : "");
-            lesson.setOrderNumber(order++);
+            lesson.setOrderNumber(rl.getOrder() != null && rl.getOrder() >= 1 ? rl.getOrder() : order);
             lesson.setCourse(course);
             Lesson saved = lessonService.createLesson(lesson, course, jwt);
             created.add(saved);
@@ -237,8 +231,20 @@ public class CourseService {
                     log.warn("Failed to vectorize lesson {}: {}", saved.getId(), e.getMessage());
                 }
             }
+            order++;
         }
         return created;
+    }
+
+    private List<RagLessonDto> validateLessonsWithRetry(String collectionName, List<Long> filterFileIds,
+                                                         List<RagLessonDto> ragLessons, List<Lesson> existingLessons) {
+        try {
+            return qualityGate.validateAndDeduplicateRagLessons(ragLessons, existingLessons);
+        } catch (QualityGateException e) {
+            log.warn("Quality gate failed for generated lessons, retrying once: {}", e.getMessage());
+            List<RagLessonDto> retryLessons = ragClient.generateLessons(collectionName, filterFileIds, null);
+            return qualityGate.validateAndDeduplicateRagLessons(retryLessons, existingLessons);
+        }
     }
 
     @Transactional
@@ -263,6 +269,8 @@ public class CourseService {
         }
 
         List<RagQuizQuestionDto> ragQuestions = ragClient.generateQuiz(collectionName, filterFileIds, lessonIds, null);
+        List<RagQuizQuestionDto> validatedQuestions = validateQuestionsWithRetry(
+                collectionName, filterFileIds, lessonIds, ragQuestions);
 
         Test test = new Test();
         test.setTitle(title != null && !title.isBlank() ? title : "Тест по курсу");
@@ -271,7 +279,7 @@ public class CourseService {
         test = testRepository.save(test);
 
         int order = 1;
-        for (RagQuizQuestionDto rq : ragQuestions) {
+        for (RagQuizQuestionDto rq : validatedQuestions) {
             Question q = new Question();
             q.setType(Question.QuestionType.MULTIPLE_CHOICE);
             q.setText(rq.getQuestion() != null ? rq.getQuestion() : "");
@@ -282,9 +290,21 @@ public class CourseService {
             q.setHint(rq.getHint() != null ? rq.getHint() : "");
             q.setTest(test);
             q.setOrderNumber(order++);
+            qualityGate.validateQuestion(q);
             questionRepository.save(q);
         }
         return test;
+    }
+
+    private List<RagQuizQuestionDto> validateQuestionsWithRetry(String collectionName, List<Long> filterFileIds,
+                                                                List<Long> lessonIds, List<RagQuizQuestionDto> ragQuestions) {
+        try {
+            return qualityGate.validateAndDeduplicateRagQuestions(ragQuestions);
+        } catch (QualityGateException e) {
+            log.warn("Quality gate failed for generated questions, retrying once: {}", e.getMessage());
+            List<RagQuizQuestionDto> retryQuestions = ragClient.generateQuiz(collectionName, filterFileIds, lessonIds, null);
+            return qualityGate.validateAndDeduplicateRagQuestions(retryQuestions);
+        }
     }
 
     private static String toJson(Object o) {

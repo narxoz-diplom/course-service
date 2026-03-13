@@ -1,17 +1,15 @@
 package com.microservices.courseservice.service;
 
+import com.microservices.courseservice.dto.RagLessonDto;
+import com.microservices.courseservice.dto.RagQuizQuestionDto;
 import com.microservices.courseservice.exception.QualityGateException;
 import com.microservices.courseservice.model.Lesson;
+import com.microservices.courseservice.model.Question;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Quality gates for lessons and test questions before persistence:
@@ -82,6 +80,92 @@ public class LessonTestQualityGate {
         }
     }
 
+    /**
+     * Validates a single question (for create/update). Throws QualityGateException on failure.
+     */
+    public void validateQuestion(Question question) {
+        if (question == null) {
+            throw new QualityGateException("Question must not be null");
+        }
+        String text = question.getText();
+        if (text == null || text.isBlank()) {
+            throw new QualityGateException("Question text is required and must not be blank");
+        }
+        if (text.trim().length() < minQuestionTextLength) {
+            throw new QualityGateException("Question text must be at least " + minQuestionTextLength + " characters");
+        }
+        String correct = question.getCorrectAnswer();
+        if (correct == null) {
+            correct = "";
+        }
+        if (correct.trim().length() < minQuestionCorrectLength) {
+            throw new QualityGateException("Question correct answer must be at least " + minQuestionCorrectLength + " character(s)");
+        }
+        if (question.getOrderNumber() == null || question.getOrderNumber() < 1) {
+            throw new QualityGateException("Question orderNumber must be a positive integer");
+        }
+    }
+
+    /**
+     * Validates and deduplicates RAG lessons (DTO). Returns filtered list with normalized order 1,2,3...
+     * Throws QualityGateException if result would be empty.
+     */
+    public List<RagLessonDto> validateAndDeduplicateRagLessons(List<RagLessonDto> ragLessons, List<Lesson> existingLessons) {
+        List<Map<String, Object>> maps = new ArrayList<>();
+        for (RagLessonDto dto : ragLessons != null ? ragLessons : List.<RagLessonDto>of()) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("title", dto.getTitle());
+            m.put("content", dto.getContent());
+            m.put("description", dto.getDescription());
+            m.put("order", dto.getOrder());
+            maps.add(m);
+        }
+        List<Map<String, Object>> validated = validateAndDeduplicateRagLessonsMaps(maps, existingLessons);
+        List<RagLessonDto> result = new ArrayList<>();
+        for (int i = 0; i < validated.size(); i++) {
+            Map<String, Object> m = validated.get(i);
+            RagLessonDto dto = new RagLessonDto();
+            dto.setTitle(getString(m, "title", ""));
+            dto.setContent(getString(m, "content", ""));
+            dto.setDescription(getString(m, "description", ""));
+            dto.setOrder(i + 1);
+            result.add(dto);
+        }
+        return result;
+    }
+
+    /**
+     * Validates and deduplicates RAG quiz questions (DTO). Returns filtered list.
+     * Throws QualityGateException if result would be empty.
+     */
+    public List<RagQuizQuestionDto> validateAndDeduplicateRagQuestions(List<RagQuizQuestionDto> questions) {
+        if (questions == null || questions.isEmpty()) {
+            throw new QualityGateException("At least one question is required for the test");
+        }
+        List<Map<String, Object>> maps = new ArrayList<>();
+        for (RagQuizQuestionDto dto : questions) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("question", dto.getQuestion());
+            m.put("correct", dto.getCorrect());
+            m.put("options", dto.getOptions());
+            m.put("explanation", dto.getExplanation());
+            m.put("hint", dto.getHint());
+            maps.add(m);
+        }
+        List<Map<String, Object>> validated = validateAndDeduplicateRagQuestionsMaps(maps);
+        List<RagQuizQuestionDto> result = new ArrayList<>();
+        for (Map<String, Object> m : validated) {
+            RagQuizQuestionDto dto = new RagQuizQuestionDto();
+            dto.setQuestion(getString(m, "question", ""));
+            dto.setCorrect(getString(m, "correct", ""));
+            dto.setOptions(m.get("options"));
+            dto.setExplanation(getString(m, "explanation", ""));
+            dto.setHint(getString(m, "hint", ""));
+            result.add(dto);
+        }
+        return result;
+    }
+
     private static String getString(Map<String, Object> m, String key, String def) {
         Object v = m == null ? null : m.get(key);
         return v != null ? v.toString().trim() : def;
@@ -91,7 +175,7 @@ public class LessonTestQualityGate {
      * Validates and deduplicates RAG lessons (Map from RAG response). Normalizes order to 1,2,3...
      * Returns filtered list; throws QualityGateException if result would be empty or validation fails.
      */
-    public List<Map<String, Object>> validateAndDeduplicateRagLessons(List<Map<String, Object>> ragLessons, List<Lesson> existingLessons) {
+    private List<Map<String, Object>> validateAndDeduplicateRagLessonsMaps(List<Map<String, Object>> ragLessons, List<Lesson> existingLessons) {
         if (ragLessons == null || ragLessons.isEmpty()) {
             throw new QualityGateException("At least one lesson is required");
         }
@@ -145,7 +229,7 @@ public class LessonTestQualityGate {
      * Validates and deduplicates RAG quiz questions (Map from RAG response).
      * Returns filtered list; throws QualityGateException if result would be empty.
      */
-    public List<Map<String, Object>> validateAndDeduplicateRagQuestions(List<Map<String, Object>> questions) {
+    private List<Map<String, Object>> validateAndDeduplicateRagQuestionsMaps(List<Map<String, Object>> questions) {
         if (questions == null || questions.isEmpty()) {
             throw new QualityGateException("At least one question is required for the test");
         }
