@@ -13,6 +13,11 @@ public class FeignConfig {
     @Bean
     public RequestInterceptor requestInterceptor() {
         return template -> {
+            String fromAsync = FeignAuthContext.getAuthorization();
+            if (fromAsync != null && !fromAsync.isBlank()) {
+                template.header("Authorization", fromAsync);
+                return;
+            }
             ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
             if (attributes != null) {
                 HttpServletRequest request = attributes.getRequest();

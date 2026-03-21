@@ -9,4 +9,7 @@ public class GenerateTestRequest {
     private List<Long> fileIds;
     private List<Long> lessonIds;
     private String title;
+    private Integer questionCount;
+    /** easy | medium | hard */
+    private String difficulty;
 }

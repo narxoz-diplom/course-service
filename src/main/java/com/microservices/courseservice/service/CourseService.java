@@ -3,6 +3,12 @@ package com.microservices.courseservice.service;
 import com.microservices.courseservice.client.AuthServiceClient;
 import com.microservices.courseservice.client.FileServiceClient;
 import com.microservices.courseservice.client.RagClient;
+import com.microservices.courseservice.dto.CourseOutlineResponse;
+import com.microservices.courseservice.dto.GenerateFromOutlineRequest;
+import com.microservices.courseservice.dto.GenerateLessonsRequest;
+import com.microservices.courseservice.dto.GenerateTestRequest;
+import com.microservices.courseservice.dto.LessonGenerationParamsDto;
+import com.microservices.courseservice.dto.LessonOutlineItemDto;
 import com.microservices.courseservice.dto.RagLessonDto;
 import com.microservices.courseservice.dto.RagQuizQuestionDto;
 import com.microservices.courseservice.dto.VideoMetadataRequest;
@@ -20,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -188,31 +195,169 @@ public class CourseService {
         return lessonService.createLesson(lesson, course, jwt);
     }
 
+    private List<Long> resolveCourseFileFilter(Long courseId, List<Long> fileIds) {
+        if (fileIds == null || fileIds.isEmpty()) {
+            return null;
+        }
+        List<Map<String, Object>> courseFiles = fileServiceClient.getFilesByCourseId(courseId);
+        var validIds = courseFiles.stream()
+                .map(f -> f.get("id"))
+                .filter(Objects::nonNull)
+                .map(id -> id instanceof Number ? ((Number) id).longValue() : Long.parseLong(id.toString()))
+                .filter(fileIds::contains)
+                .toList();
+        if (validIds.isEmpty()) {
+            throw new RuntimeException("No valid files found for the selected file IDs");
+        }
+        return validIds;
+    }
+
     @Transactional
-    public List<Lesson> generateLessonsFromFiles(Long courseId, List<Long> fileIds, Jwt jwt) {
+    public List<Lesson> generateLessonsFromFiles(Long courseId, GenerateLessonsRequest genRequest, Jwt jwt) {
         Course course = getCourseById(courseId);
         validateCourseUpdatePermission(course, jwt);
 
         String collectionName = "course_" + courseId;
-        List<Long> filterFileIds = null;
-        if (fileIds != null && !fileIds.isEmpty()) {
-            List<Map<String, Object>> courseFiles = fileServiceClient.getFilesByCourseId(courseId);
-            var validIds = courseFiles.stream()
-                    .map(f -> f.get("id"))
-                    .filter(Objects::nonNull)
-                    .map(id -> id instanceof Number ? ((Number) id).longValue() : Long.parseLong(id.toString()))
-                    .filter(fileIds::contains)
-                    .toList();
-            if (validIds.isEmpty()) {
-                throw new RuntimeException("No valid files found for the selected file IDs");
-            }
-            filterFileIds = validIds;
+        List<Long> filterFileIds = resolveCourseFileFilter(courseId, genRequest.getFileIds());
+
+        String prompt = genRequest.getPrompt();
+        if (prompt != null && prompt.isBlank()) {
+            prompt = null;
         }
 
         List<Lesson> existingLessons = lessonService.getLessonsByCourse(courseId);
-        List<RagLessonDto> ragLessons = ragClient.generateLessons(collectionName, filterFileIds, null);
-        List<RagLessonDto> validatedLessons = validateLessonsWithRetry(collectionName, filterFileIds, ragLessons, existingLessons);
+        List<RagLessonDto> ragLessons = ragClient.generateLessons(
+                collectionName, filterFileIds, prompt, genRequest.getTopK(), genRequest.getParams());
+        List<RagLessonDto> validatedLessons = validateLessonsWithRetry(
+                collectionName, filterFileIds, prompt, genRequest.getTopK(), genRequest.getParams(),
+                ragLessons, existingLessons);
 
+        return persistRagLessons(course, courseId, collectionName, validatedLessons, jwt);
+    }
+
+    public CourseOutlineResponse generateLessonOutline(Long courseId, GenerateLessonsRequest genRequest, Jwt jwt) {
+        Course course = getCourseById(courseId);
+        validateCourseUpdatePermission(course, jwt);
+        return buildCourseOutlineResponse(courseId, genRequest);
+    }
+
+    private CourseOutlineResponse buildCourseOutlineResponse(Long courseId, GenerateLessonsRequest genRequest) {
+        String collectionName = "course_" + courseId;
+        List<Long> filterFileIds = resolveCourseFileFilter(courseId, genRequest.getFileIds());
+        String prompt = genRequest.getPrompt();
+        if (prompt != null && prompt.isBlank()) {
+            prompt = null;
+        }
+        return ragClient.generateCourseOutline(
+                collectionName, filterFileIds, prompt, genRequest.getTopK(), genRequest.getParams());
+    }
+
+    /**
+     * Async / internal: only the real course instructor (not admin impersonation).
+     */
+    public CourseOutlineResponse generateLessonOutlineForInstructor(
+            Long courseId, GenerateLessonsRequest genRequest, String instructorId) {
+        Course course = getCourseById(courseId);
+        if (!course.getInstructorId().equals(instructorId)) {
+            throw new AccessDeniedException("Only course instructor can generate outline for this course");
+        }
+        return buildCourseOutlineResponse(courseId, genRequest);
+    }
+
+    @Transactional
+    public List<Lesson> generateLessonsFromOutline(Long courseId, GenerateFromOutlineRequest genRequest, Jwt jwt) {
+        Course course = getCourseById(courseId);
+        validateCourseUpdatePermission(course, jwt);
+        return generateLessonsFromOutlineAuthorized(course, courseId, genRequest, jwt);
+    }
+
+    /**
+     * Background generation: instructor id must match course owner (no admin bypass in jobs).
+     */
+    @Transactional
+    public List<Lesson> generateLessonsFromOutlineForInstructor(
+            Long courseId, GenerateFromOutlineRequest genRequest, String instructorId) {
+        Course course = getCourseById(courseId);
+        if (!course.getInstructorId().equals(instructorId)) {
+            throw new AccessDeniedException("Only course instructor can generate lessons for this course");
+        }
+        Jwt jobJwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("job")
+                .header("alg", "none")
+                .subject(instructorId)
+                .claim("realm_access", Map.of("roles", List.of("teacher")))
+                .build();
+        return generateLessonsFromOutlineAuthorized(course, courseId, genRequest, jobJwt);
+    }
+
+    private List<Lesson> generateLessonsFromOutlineAuthorized(
+            Course course,
+            Long courseId,
+            GenerateFromOutlineRequest genRequest,
+            Jwt jwt) {
+        if (genRequest.getOutline() == null || genRequest.getOutline().isEmpty()) {
+            throw new RuntimeException("Outline must contain at least one lesson");
+        }
+        String collectionName = "course_" + courseId;
+        List<Long> filterFileIds = resolveCourseFileFilter(courseId, genRequest.getFileIds());
+
+        List<LessonOutlineItemDto> items = new ArrayList<>(genRequest.getOutline());
+        items.removeIf(o -> o.getTitle() == null || o.getTitle().isBlank());
+        items.sort(Comparator.comparingInt(o -> o.getOrder() != null ? o.getOrder() : Integer.MAX_VALUE));
+        for (int i = 0; i < items.size(); i++) {
+            LessonOutlineItemDto it = items.get(i);
+            it.setOrder(i + 1);
+        }
+
+        List<Lesson> existingLessons = lessonService.getLessonsByCourse(courseId);
+        List<Lesson> created = new ArrayList<>();
+        LessonGenerationParamsDto params = genRequest.getParams();
+        int total = items.size();
+        int idx = 1;
+        for (LessonOutlineItemDto item : items) {
+            RagLessonDto dto = ragClient.generateSingleLesson(
+                    collectionName,
+                    filterFileIds,
+                    item.getTitle(),
+                    item.getSummary() != null ? item.getSummary() : "",
+                    idx,
+                    total,
+                    24,
+                    params);
+            List<Lesson> prior = new ArrayList<>(existingLessons);
+            prior.addAll(created);
+            List<RagLessonDto> validated = qualityGate.validateAndDeduplicateRagLessons(List.of(dto), prior);
+            if (validated.isEmpty()) {
+                throw new QualityGateException("Generated lesson did not pass quality gate: " + item.getTitle());
+            }
+            RagLessonDto rl = validated.get(0);
+            Lesson lesson = new Lesson();
+            lesson.setTitle(rl.getTitle() != null && !rl.getTitle().isBlank() ? rl.getTitle() : item.getTitle());
+            lesson.setContent(rl.getContent() != null ? rl.getContent() : "");
+            lesson.setDescription(rl.getDescription() != null ? rl.getDescription() : "");
+            lesson.setOrderNumber(idx);
+            lesson.setCourse(course);
+            Lesson saved = lessonService.createLesson(lesson, course, jwt);
+            created.add(saved);
+            String content = rl.getContent() != null ? rl.getContent() : "";
+            if (!content.isBlank()) {
+                try {
+                    ragClient.vectorizeText(content, collectionName,
+                            Map.of("lesson_id", String.valueOf(saved.getId()), "course_id", String.valueOf(courseId)));
+                } catch (Exception e) {
+                    log.warn("Failed to vectorize lesson {}: {}", saved.getId(), e.getMessage());
+                }
+            }
+            idx++;
+        }
+        return created;
+    }
+
+    private List<Lesson> persistRagLessons(
+            Course course,
+            Long courseId,
+            String collectionName,
+            List<RagLessonDto> validatedLessons,
+            Jwt jwt) {
         List<Lesson> created = new ArrayList<>();
         int order = 1;
         for (RagLessonDto rl : validatedLessons) {
@@ -239,42 +384,47 @@ public class CourseService {
         return created;
     }
 
-    private List<RagLessonDto> validateLessonsWithRetry(String collectionName, List<Long> filterFileIds,
-                                                         List<RagLessonDto> ragLessons, List<Lesson> existingLessons) {
+    private List<RagLessonDto> validateLessonsWithRetry(
+            String collectionName,
+            List<Long> filterFileIds,
+            String prompt,
+            Integer topK,
+            LessonGenerationParamsDto params,
+            List<RagLessonDto> ragLessons,
+            List<Lesson> existingLessons) {
         try {
             return qualityGate.validateAndDeduplicateRagLessons(ragLessons, existingLessons);
         } catch (QualityGateException e) {
             log.warn("Quality gate failed for generated lessons, retrying once: {}", e.getMessage());
-            List<RagLessonDto> retryLessons = ragClient.generateLessons(collectionName, filterFileIds, null);
+            List<RagLessonDto> retryLessons = ragClient.generateLessons(collectionName, filterFileIds, prompt, topK, params);
             return qualityGate.validateAndDeduplicateRagLessons(retryLessons, existingLessons);
         }
     }
 
     @Transactional
-    public Test generateTest(Long courseId, List<Long> fileIds, List<Long> lessonIds, String title, Jwt jwt) {
+    public Test generateTest(Long courseId, GenerateTestRequest testRequest, Jwt jwt) {
         Course course = getCourseById(courseId);
         validateCourseUpdatePermission(course, jwt);
 
         String collectionName = "course_" + courseId;
+        List<Long> fileIds = testRequest.getFileIds();
+        List<Long> lessonIds = testRequest.getLessonIds();
         List<Long> filterFileIds = null;
         if (fileIds != null && !fileIds.isEmpty()) {
-            List<Map<String, Object>> courseFiles = fileServiceClient.getFilesByCourseId(courseId);
-            var validIds = courseFiles.stream()
-                    .map(f -> f.get("id"))
-                    .filter(Objects::nonNull)
-                    .map(id -> id instanceof Number ? ((Number) id).longValue() : Long.parseLong(id.toString()))
-                    .filter(fileIds::contains)
-                    .toList();
-            if (validIds.isEmpty()) {
-                throw new RuntimeException("No valid files found for the selected file IDs");
-            }
-            filterFileIds = validIds;
+            filterFileIds = resolveCourseFileFilter(courseId, fileIds);
         }
 
-        List<RagQuizQuestionDto> ragQuestions = ragClient.generateQuiz(collectionName, filterFileIds, lessonIds, null);
+        List<RagQuizQuestionDto> ragQuestions = ragClient.generateQuiz(
+                collectionName,
+                filterFileIds,
+                lessonIds,
+                null,
+                testRequest.getQuestionCount(),
+                testRequest.getDifficulty());
         List<RagQuizQuestionDto> validatedQuestions = validateQuestionsWithRetry(
-                collectionName, filterFileIds, lessonIds, ragQuestions);
+                collectionName, filterFileIds, lessonIds, testRequest.getQuestionCount(), testRequest.getDifficulty(), ragQuestions);
 
+        String title = testRequest.getTitle();
         Test test = new Test();
         test.setTitle(title != null && !title.isBlank() ? title : "Тест по курсу");
         test.setCourse(course);
@@ -299,13 +449,19 @@ public class CourseService {
         return test;
     }
 
-    private List<RagQuizQuestionDto> validateQuestionsWithRetry(String collectionName, List<Long> filterFileIds,
-                                                                List<Long> lessonIds, List<RagQuizQuestionDto> ragQuestions) {
+    private List<RagQuizQuestionDto> validateQuestionsWithRetry(
+            String collectionName,
+            List<Long> filterFileIds,
+            List<Long> lessonIds,
+            Integer questionCount,
+            String difficulty,
+            List<RagQuizQuestionDto> ragQuestions) {
         try {
             return qualityGate.validateAndDeduplicateRagQuestions(ragQuestions);
         } catch (QualityGateException e) {
             log.warn("Quality gate failed for generated questions, retrying once: {}", e.getMessage());
-            List<RagQuizQuestionDto> retryQuestions = ragClient.generateQuiz(collectionName, filterFileIds, lessonIds, null);
+            List<RagQuizQuestionDto> retryQuestions = ragClient.generateQuiz(
+                    collectionName, filterFileIds, lessonIds, null, questionCount, difficulty);
             return qualityGate.validateAndDeduplicateRagQuestions(retryQuestions);
         }
     }
@@ -471,6 +627,12 @@ public class CourseService {
         if (!RoleUtil.isAdmin(jwt) && !course.getInstructorId().equals(jwt.getSubject())) {
             throw new AccessDeniedException("Only course instructor can update course");
         }
+    }
+
+    /** For other services (e.g. async jobs) that need the same rule as update endpoints. */
+    public void assertCanMutateCourseContent(Long courseId, Jwt jwt) {
+        Course course = getCourseById(courseId);
+        validateCourseUpdatePermission(course, jwt);
     }
 
     private void validateCourseDeletePermission(Course course, Jwt jwt) {

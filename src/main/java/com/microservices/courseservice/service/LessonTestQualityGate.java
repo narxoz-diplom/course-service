@@ -36,6 +36,10 @@ public class LessonTestQualityGate {
     @Value("${course-service.quality-gate.min-question-correct-length:" + DEFAULT_MIN_QUESTION_CORRECT_LENGTH + "}")
     private int minQuestionCorrectLength = DEFAULT_MIN_QUESTION_CORRECT_LENGTH;
 
+    /** Drop batch lesson if Jaccard(word) similarity with an earlier kept lesson exceeds this (0–1). */
+    @Value("${course-service.quality-gate.max-batch-content-jaccard:0.92}")
+    private double maxBatchContentJaccard = 0.92;
+
     /** Constructor for testing with explicit limits. */
     public LessonTestQualityGate(int minLessonTitleLength, int minLessonContentLength,
                                 int minQuestionTextLength, int minQuestionCorrectLength) {
@@ -45,6 +49,16 @@ public class LessonTestQualityGate {
         this.minQuestionCorrectLength = minQuestionCorrectLength;
     }
 
+    public LessonTestQualityGate(int minLessonTitleLength, int minLessonContentLength,
+                                 int minQuestionTextLength, int minQuestionCorrectLength,
+                                 double maxBatchContentJaccard) {
+        this.minLessonTitleLength = minLessonTitleLength;
+        this.minLessonContentLength = minLessonContentLength;
+        this.minQuestionTextLength = minQuestionTextLength;
+        this.minQuestionCorrectLength = minQuestionCorrectLength;
+        this.maxBatchContentJaccard = maxBatchContentJaccard;
+    }
+
     public LessonTestQualityGate() {
         // default for Spring injection
     }
@@ -52,6 +66,36 @@ public class LessonTestQualityGate {
     private static String normalizeForDedup(String s) {
         if (s == null) return "";
         return s.trim().toLowerCase().replaceAll("\\s+", " ");
+    }
+
+    private static java.util.Set<String> wordBag(String text) {
+        if (text == null || text.isBlank()) {
+            return java.util.Collections.emptySet();
+        }
+        String[] parts = normalizeForDedup(text).split("[^\\p{L}\\p{N}]+");
+        java.util.Set<String> out = new java.util.HashSet<>();
+        for (String p : parts) {
+            if (p.length() > 1) {
+                out.add(p);
+            }
+        }
+        return out;
+    }
+
+    static double jaccardWordSimilarity(String a, String b) {
+        java.util.Set<String> sa = wordBag(a);
+        java.util.Set<String> sb = wordBag(b);
+        if (sa.isEmpty() && sb.isEmpty()) {
+            return 1.0;
+        }
+        if (sa.isEmpty() || sb.isEmpty()) {
+            return 0.0;
+        }
+        java.util.Set<String> inter = new java.util.HashSet<>(sa);
+        inter.retainAll(sb);
+        java.util.Set<String> union = new java.util.HashSet<>(sa);
+        union.addAll(sb);
+        return union.isEmpty() ? 0.0 : (double) inter.size() / (double) union.size();
     }
 
     /**
@@ -213,16 +257,43 @@ public class LessonTestQualityGate {
             seenTitleOrContent.add(normContent);
             deduped.add(new HashMap<>(rl));
         }
-        if (deduped.isEmpty()) {
+        List<Map<String, Object>> lowSimilarity = filterNearDuplicateLessonBodies(deduped);
+        if (lowSimilarity.isEmpty()) {
             throw new QualityGateException(
                 "No lessons passed quality gate: min title length=" + minLessonTitleLength +
-                ", min content length=" + minLessonContentLength + ", duplicates removed");
+                ", min content length=" + minLessonContentLength + ", duplicates or near-duplicates removed");
         }
         // Normalize order to 1, 2, 3, ...
-        for (int i = 0; i < deduped.size(); i++) {
-            deduped.get(i).put("order", i + 1);
+        for (int i = 0; i < lowSimilarity.size(); i++) {
+            lowSimilarity.get(i).put("order", i + 1);
         }
-        return deduped;
+        return lowSimilarity;
+    }
+
+    /**
+     * Remove lessons whose body is almost identical (Jaccard on words) to an earlier kept lesson.
+     */
+    private List<Map<String, Object>> filterNearDuplicateLessonBodies(List<Map<String, Object>> lessons) {
+        if (lessons == null || lessons.isEmpty()) {
+            return lessons;
+        }
+        List<Map<String, Object>> kept = new ArrayList<>();
+        for (Map<String, Object> candidate : lessons) {
+            String ctext = getString(candidate, "content", "");
+            boolean tooSimilar = false;
+            for (Map<String, Object> k : kept) {
+                double sim = jaccardWordSimilarity(ctext, getString(k, "content", ""));
+                if (sim >= maxBatchContentJaccard) {
+                    tooSimilar = true;
+                    log.debug("Skipping near-duplicate lesson content (Jaccard {} >= {})", sim, maxBatchContentJaccard);
+                    break;
+                }
+            }
+            if (!tooSimilar) {
+                kept.add(candidate);
+            }
+        }
+        return kept;
     }
 
     /**

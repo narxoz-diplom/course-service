@@ -25,6 +25,7 @@ public class CourseController {
 
     private final CourseService courseService;
     private final CacheService cacheService;
+    private final com.microservices.courseservice.service.LessonGenerationJobService lessonGenerationJobService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -97,7 +98,41 @@ public class CourseController {
             @PathVariable Long courseId,
             @RequestBody com.microservices.courseservice.dto.GenerateLessonsRequest request,
             @AuthenticationPrincipal Jwt jwt) {
-        return courseService.generateLessonsFromFiles(courseId, request.getFileIds(), jwt);
+        return courseService.generateLessonsFromFiles(courseId, request, jwt);
+    }
+
+    @PostMapping("/{courseId}/lessons/generate-outline")
+    public com.microservices.courseservice.dto.CourseOutlineResponse generateLessonOutline(
+            @PathVariable Long courseId,
+            @RequestBody com.microservices.courseservice.dto.GenerateLessonsRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.generateLessonOutline(courseId, request, jwt);
+    }
+
+    @PostMapping("/{courseId}/lessons/generate-from-outline")
+    @ResponseStatus(HttpStatus.CREATED)
+    public List<Lesson> generateLessonsFromOutline(
+            @PathVariable Long courseId,
+            @RequestBody com.microservices.courseservice.dto.GenerateFromOutlineRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.generateLessonsFromOutline(courseId, request, jwt);
+    }
+
+    @PostMapping("/{courseId}/lessons/generation-jobs/from-outline")
+    public com.microservices.courseservice.dto.LessonGenerationJobDto startLessonGenerationJobFromOutline(
+            @PathVariable Long courseId,
+            @RequestBody com.microservices.courseservice.dto.GenerateFromOutlineRequest request,
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = "Authorization", required = false) String authorization) {
+        return lessonGenerationJobService.startFromOutlineJob(courseId, request, jwt, authorization);
+    }
+
+    @GetMapping("/{courseId}/lessons/generation-jobs/{jobId}")
+    public com.microservices.courseservice.dto.LessonGenerationJobDto getLessonGenerationJob(
+            @PathVariable Long courseId,
+            @PathVariable String jobId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return lessonGenerationJobService.getJob(jobId, courseId, jwt);
     }
 
     @GetMapping("/{courseId}/lessons")
@@ -181,11 +216,7 @@ public class CourseController {
             @PathVariable Long courseId,
             @RequestBody com.microservices.courseservice.dto.GenerateTestRequest request,
             @AuthenticationPrincipal Jwt jwt) {
-        return courseService.generateTest(courseId,
-                request.getFileIds(),
-                request.getLessonIds(),
-                request.getTitle(),
-                jwt);
+        return courseService.generateTest(courseId, request, jwt);
     }
 
     @GetMapping("/{courseId}/tests")

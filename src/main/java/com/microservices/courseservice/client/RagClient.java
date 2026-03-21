@@ -1,5 +1,7 @@
 package com.microservices.courseservice.client;
 
+import com.microservices.courseservice.dto.CourseOutlineResponse;
+import com.microservices.courseservice.dto.LessonGenerationParamsDto;
 import com.microservices.courseservice.dto.RagLessonDto;
 import com.microservices.courseservice.dto.RagLessonsResponse;
 import com.microservices.courseservice.dto.RagQuizQuestionDto;
@@ -14,6 +16,7 @@ import reactor.util.retry.Retry;
 
 import java.net.ConnectException;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
@@ -76,6 +79,39 @@ public class RagClient {
         return new RagClientException("RAG request failed: " + (t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName()), t);
     }
 
+    private static final int TOP_K_CAP = 2000;
+
+    static void putGenerationParams(Map<String, Object> body, LessonGenerationParamsDto p) {
+        if (p == null) {
+            return;
+        }
+        Map<String, Object> m = new HashMap<>();
+        if (p.getTeacherBrief() != null && !p.getTeacherBrief().isBlank()) {
+            m.put("teacher_brief", p.getTeacherBrief());
+        }
+        if (p.getTargetAudience() != null && !p.getTargetAudience().isBlank()) {
+            m.put("target_audience", p.getTargetAudience());
+        }
+        if (p.getMinLessons() != null) {
+            m.put("min_lessons", p.getMinLessons());
+        }
+        if (p.getMaxLessons() != null) {
+            m.put("max_lessons", p.getMaxLessons());
+        }
+        if (p.getDepth() != null && !p.getDepth().isBlank()) {
+            m.put("depth", p.getDepth());
+        }
+        if (p.getRetrievalMode() != null && !p.getRetrievalMode().isBlank()) {
+            m.put("retrieval_mode", p.getRetrievalMode());
+        }
+        if (p.getRetrievalQuery() != null && !p.getRetrievalQuery().isBlank()) {
+            m.put("retrieval_query", p.getRetrievalQuery());
+        }
+        if (!m.isEmpty()) {
+            body.put("params", m);
+        }
+    }
+
     /** Retry only on timeout/connection (transient), not on 4xx/5xx. */
     private static boolean isTransient(Throwable t) {
         if (t instanceof RagClientException || t instanceof WebClientResponseException) {
@@ -90,25 +126,35 @@ public class RagClient {
     }
 
     /**
-     * Generate lessons from RAG collection.
-     *
-     * @param collectionName course collection (e.g. course_1)
-     * @param fileIds        optional filter by file IDs; if null/empty, use all content
-     * @param prompt         optional prompt
-     * @return list of lessons: [{title, content, description, order}, ...]
+     * Generate lessons from RAG collection (legacy one-shot).
      */
     public List<RagLessonDto> generateLessons(String collectionName, List<Long> fileIds, String prompt) {
+        return generateLessons(collectionName, fileIds, prompt, null, null);
+    }
+
+    /**
+     * Generate lessons with optional top_k and pedagogy params.
+     */
+    public List<RagLessonDto> generateLessons(
+            String collectionName,
+            List<Long> fileIds,
+            String prompt,
+            Integer topK,
+            LessonGenerationParamsDto params) {
         var request = new java.util.HashMap<String, Object>();
         request.put("collection_name", collectionName);
-        request.put("prompt", prompt != null ? prompt :
-                "Создай структурированный курс из нескольких уроков на основе загруженных материалов. " +
-                "В каждом уроке, где это уместно, добавь 1–3 иллюстрации в виде markdown-картинок с полными https-ссылками на изображения из интернета " +
-                "(формат: ![краткий текст](https://...)). Эти картинки будут показаны ученику внутри текста урока. " +
-                "Если по какому-то фрагменту материала подходящей картинки нет, просто не добавляй её.");
-        request.put("top_k", 16);
+        String p = prompt != null && !prompt.isBlank() ? prompt
+                : "Создай структурированный курс из нескольких уроков на основе загруженных материалов. "
+                + "В каждом уроке, где это уместно, добавь 1–3 иллюстрации в виде markdown-картинок с полными https-ссылками на изображения из интернета "
+                + "(формат: ![краткий текст](https://...)). Эти картинки будут показаны ученику внутри текста урока. "
+                + "Если по какому-то фрагменту материала подходящей картинки нет, просто не добавляй её.";
+        request.put("prompt", p);
+        int k = topK != null ? Math.min(Math.max(topK, 1), TOP_K_CAP) : 16;
+        request.put("top_k", k);
         if (fileIds != null && !fileIds.isEmpty()) {
             request.put("file_ids", fileIds.stream().map(String::valueOf).toList());
         }
+        putGenerationParams(request, params);
 
         RagLessonsResponse response = webClient.post()
                 .uri("/api/v1/generate-lessons")
@@ -144,6 +190,112 @@ public class RagClient {
         return response.getLessons();
     }
 
+    public CourseOutlineResponse generateCourseOutline(
+            String collectionName,
+            List<Long> fileIds,
+            String prompt,
+            Integer topK,
+            LessonGenerationParamsDto params) {
+        var request = new java.util.HashMap<String, Object>();
+        request.put("collection_name", collectionName);
+        if (prompt != null && !prompt.isBlank()) {
+            request.put("prompt", prompt);
+        }
+        if (topK != null) {
+            request.put("top_k", Math.min(Math.max(topK, 1), TOP_K_CAP));
+        }
+        if (fileIds != null && !fileIds.isEmpty()) {
+            request.put("file_ids", fileIds.stream().map(String::valueOf).toList());
+        }
+        putGenerationParams(request, params);
+
+        CourseOutlineResponse response = webClient.post()
+                .uri("/api/v1/generate-course-outline")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(request)
+                .retrieve()
+                .onStatus(
+                        status -> status.is4xxClientError() || status.is5xxServerError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                                .defaultIfEmpty("")
+                                .map(body -> {
+                                    String message = "RAG generate-course-outline failed with status "
+                                            + clientResponse.statusCode().value();
+                                    if (!body.isBlank()) {
+                                        message += ": " + body;
+                                    }
+                                    return new RagClientException(message);
+                                })
+                )
+                .bodyToMono(CourseOutlineResponse.class)
+                .timeout(timeout)
+                .retryWhen(Retry.backoff(retryMaxAttempts - 1, retryFirstBackoff)
+                        .filter(RagClient::isTransient)
+                        .doBeforeRetry(s -> log.warn("RAG generate-course-outline retry attempt {} after: {}",
+                                s.totalRetries() + 1, s.failure().getMessage())))
+                .onErrorMap(RagClient::mapToRagClientException)
+                .block();
+
+        if (response == null || response.getOutline() == null) {
+            throw new RagClientException("RAG generate-course-outline returned invalid response");
+        }
+        return response;
+    }
+
+    public RagLessonDto generateSingleLesson(
+            String collectionName,
+            List<Long> fileIds,
+            String title,
+            String summary,
+            int lessonIndex,
+            int totalLessons,
+            int topK,
+            LessonGenerationParamsDto params) {
+        var request = new java.util.HashMap<String, Object>();
+        request.put("collection_name", collectionName);
+        request.put("title", title);
+        request.put("summary", summary != null ? summary : "");
+        request.put("lesson_index", lessonIndex);
+        request.put("total_lessons", totalLessons);
+        request.put("top_k", Math.min(Math.max(topK, 1), 80));
+        if (fileIds != null && !fileIds.isEmpty()) {
+            request.put("file_ids", fileIds.stream().map(String::valueOf).toList());
+        }
+        putGenerationParams(request, params);
+
+        RagLessonsResponse response = webClient.post()
+                .uri("/api/v1/generate-single-lesson-lms")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(request)
+                .retrieve()
+                .onStatus(
+                        status -> status.is4xxClientError() || status.is5xxServerError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                                .defaultIfEmpty("")
+                                .map(body -> {
+                                    String message = "RAG generate-single-lesson-lms failed with status "
+                                            + clientResponse.statusCode().value();
+                                    if (!body.isBlank()) {
+                                        message += ": " + body;
+                                    }
+                                    return new RagClientException(message);
+                                })
+                )
+                .bodyToMono(RagLessonsResponse.class)
+                .timeout(timeout)
+                .retryWhen(Retry.backoff(retryMaxAttempts - 1, retryFirstBackoff)
+                        .filter(RagClient::isTransient)
+                        .doBeforeRetry(s -> log.warn("RAG generate-single-lesson-lms retry attempt {} after: {}",
+                                s.totalRetries() + 1, s.failure().getMessage())))
+                .onErrorMap(RagClient::mapToRagClientException)
+                .block();
+
+        if (response == null || response.getLessons() == null || response.getLessons().isEmpty()) {
+            throw new RagClientException("RAG generate-single-lesson-lms returned no lesson");
+        }
+        return response.getLessons().get(0);
+    }
+
     /**
      * Generate quiz/test from RAG collection (LMS endpoint).
      *
@@ -153,7 +305,18 @@ public class RagClient {
      * @param prompt         optional prompt
      * @return list of questions: [{question, options, correct, explanation, hint}, ...]
      */
-    public List<RagQuizQuestionDto> generateQuiz(String collectionName, List<Long> fileIds, List<Long> lessonIds, String prompt) {
+    public List<RagQuizQuestionDto> generateQuiz(
+            String collectionName, List<Long> fileIds, List<Long> lessonIds, String prompt) {
+        return generateQuiz(collectionName, fileIds, lessonIds, prompt, null, null);
+    }
+
+    public List<RagQuizQuestionDto> generateQuiz(
+            String collectionName,
+            List<Long> fileIds,
+            List<Long> lessonIds,
+            String prompt,
+            Integer questionCount,
+            String difficulty) {
         var requestBuilder = new java.util.HashMap<String, Object>();
         requestBuilder.put("collection_name", collectionName);
         requestBuilder.put("prompt", prompt != null ? prompt : "Создай тест по загруженным материалам.");
@@ -163,6 +326,12 @@ public class RagClient {
         }
         if (lessonIds != null && !lessonIds.isEmpty()) {
             requestBuilder.put("lesson_ids", lessonIds.stream().map(String::valueOf).toList());
+        }
+        if (questionCount != null) {
+            requestBuilder.put("question_count", questionCount);
+        }
+        if (difficulty != null && !difficulty.isBlank()) {
+            requestBuilder.put("difficulty", difficulty);
         }
 
         RagQuizResponse response = webClient.post()

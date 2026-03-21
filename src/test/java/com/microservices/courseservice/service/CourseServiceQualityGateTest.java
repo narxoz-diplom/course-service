@@ -3,6 +3,8 @@ package com.microservices.courseservice.service;
 import com.microservices.courseservice.client.AuthServiceClient;
 import com.microservices.courseservice.client.FileServiceClient;
 import com.microservices.courseservice.client.RagClient;
+import com.microservices.courseservice.dto.GenerateLessonsRequest;
+import com.microservices.courseservice.dto.GenerateTestRequest;
 import com.microservices.courseservice.dto.RagLessonDto;
 import com.microservices.courseservice.dto.RagQuizQuestionDto;
 import com.microservices.courseservice.exception.QualityGateException;
@@ -27,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
 /**
@@ -90,7 +93,7 @@ class CourseServiceQualityGateTest {
                 ragLesson("Lesson One", "Content that is long enough to pass the minimum length for lessons.", null),
                 ragLesson("Lesson Two", "Another content that is long enough to pass the minimum length.", null)
         );
-        when(ragClient.generateLessons(eq("course_1"), eq(null), eq(null))).thenReturn(ragLessons);
+        when(ragClient.generateLessons(eq("course_1"), eq(null), isNull(), isNull(), isNull())).thenReturn(ragLessons);
         List<RagLessonDto> validated = List.of(
                 ragLesson("Lesson One", "Content that is long enough to pass the minimum length for lessons.", 1),
                 ragLesson("Lesson Two", "Another content that is long enough to pass the minimum length.", 2)
@@ -102,7 +105,7 @@ class CourseServiceQualityGateTest {
         saved2.setId(11L);
         when(lessonService.createLesson(any(Lesson.class), eq(course), eq(jwt))).thenReturn(saved1, saved2);
 
-        List<Lesson> result = courseService.generateLessonsFromFiles(1L, null, jwt);
+        List<Lesson> result = courseService.generateLessonsFromFiles(1L, new GenerateLessonsRequest(), jwt);
 
         verify(qualityGate, times(1)).validateAndDeduplicateRagLessons(ragLessons, List.of());
         verify(lessonService, times(2)).createLesson(any(Lesson.class), eq(course), eq(jwt));
@@ -119,7 +122,8 @@ class CourseServiceQualityGateTest {
         List<RagLessonDto> secondRag = List.of(
                 ragLesson("Good Lesson", "Content that is long enough to pass the minimum length for lessons.", null)
         );
-        when(ragClient.generateLessons(eq("course_1"), eq(null), eq(null))).thenReturn(firstRag).thenReturn(secondRag);
+        when(ragClient.generateLessons(eq("course_1"), eq(null), isNull(), isNull(), isNull()))
+                .thenReturn(firstRag).thenReturn(secondRag);
         when(qualityGate.validateAndDeduplicateRagLessons(firstRag, List.of()))
                 .thenThrow(new QualityGateException("No lessons passed"));
         List<RagLessonDto> validated = List.of(
@@ -130,9 +134,9 @@ class CourseServiceQualityGateTest {
         saved.setId(10L);
         when(lessonService.createLesson(any(Lesson.class), eq(course), eq(jwt))).thenReturn(saved);
 
-        List<Lesson> result = courseService.generateLessonsFromFiles(1L, null, jwt);
+        List<Lesson> result = courseService.generateLessonsFromFiles(1L, new GenerateLessonsRequest(), jwt);
 
-        verify(ragClient, times(2)).generateLessons(eq("course_1"), eq(null), eq(null));
+        verify(ragClient, times(2)).generateLessons(eq("course_1"), eq(null), isNull(), isNull(), isNull());
         verify(qualityGate, times(1)).validateAndDeduplicateRagLessons(firstRag, List.of());
         verify(qualityGate, times(1)).validateAndDeduplicateRagLessons(secondRag, List.of());
         assertThat(result).hasSize(1);
@@ -143,15 +147,15 @@ class CourseServiceQualityGateTest {
         when(courseRepository.findById(1L)).thenReturn(Optional.of(course));
         when(lessonService.getLessonsByCourse(1L)).thenReturn(List.of());
         List<RagLessonDto> badRag = List.of(ragLesson("A", "short", null));
-        when(ragClient.generateLessons(eq("course_1"), eq(null), eq(null))).thenReturn(badRag);
+        when(ragClient.generateLessons(eq("course_1"), eq(null), isNull(), isNull(), isNull())).thenReturn(badRag);
         when(qualityGate.validateAndDeduplicateRagLessons(any(), any()))
                 .thenThrow(new QualityGateException("No lessons passed"));
 
-        assertThatThrownBy(() -> courseService.generateLessonsFromFiles(1L, null, jwt))
+        assertThatThrownBy(() -> courseService.generateLessonsFromFiles(1L, new GenerateLessonsRequest(), jwt))
                 .isInstanceOf(QualityGateException.class)
                 .hasMessageContaining("No lessons passed");
 
-        verify(ragClient, times(2)).generateLessons(eq("course_1"), eq(null), eq(null));
+        verify(ragClient, times(2)).generateLessons(eq("course_1"), eq(null), isNull(), isNull(), isNull());
         verify(lessonService, never()).createLesson(any(), any(), any());
     }
 
@@ -169,7 +173,8 @@ class CourseServiceQualityGateTest {
                 ragQuestion("First question with enough text?", "Yes"),
                 ragQuestion("Second question with enough text?", "No")
         );
-        when(ragClient.generateQuiz(eq("course_1"), eq(null), eq(null), eq(null))).thenReturn(ragQuestions);
+        when(ragClient.generateQuiz(eq("course_1"), eq(null), eq(null), eq(null), isNull(), isNull()))
+                .thenReturn(ragQuestions);
         List<RagQuizQuestionDto> validated = List.of(
                 ragQuestion("First question with enough text?", "Yes"),
                 ragQuestion("Second question with enough text?", "No")
@@ -181,7 +186,11 @@ class CourseServiceQualityGateTest {
             return t;
         });
 
-        Test result = courseService.generateTest(1L, null, null, "Test Title", jwt);
+        GenerateTestRequest tr = new GenerateTestRequest();
+        tr.setFileIds(null);
+        tr.setLessonIds(null);
+        tr.setTitle("Test Title");
+        Test result = courseService.generateTest(1L, tr, jwt);
 
         verify(qualityGate, times(1)).validateAndDeduplicateRagQuestions(ragQuestions);
         verify(questionRepository, times(2)).save(any());
@@ -194,7 +203,8 @@ class CourseServiceQualityGateTest {
         when(courseRepository.findById(1L)).thenReturn(Optional.of(course));
         List<RagQuizQuestionDto> firstRag = List.of(ragQuestion("short", ""));
         List<RagQuizQuestionDto> secondRag = List.of(ragQuestion("Valid question with enough text?", "A"));
-        when(ragClient.generateQuiz(eq("course_1"), eq(null), eq(null), eq(null))).thenReturn(firstRag).thenReturn(secondRag);
+        when(ragClient.generateQuiz(eq("course_1"), eq(null), eq(null), eq(null), isNull(), isNull()))
+                .thenReturn(firstRag).thenReturn(secondRag);
         when(qualityGate.validateAndDeduplicateRagQuestions(firstRag))
                 .thenThrow(new QualityGateException("No questions passed"));
         when(qualityGate.validateAndDeduplicateRagQuestions(secondRag)).thenReturn(secondRag);
@@ -204,9 +214,11 @@ class CourseServiceQualityGateTest {
             return t;
         });
 
-        Test result = courseService.generateTest(1L, null, null, "Quiz", jwt);
+        GenerateTestRequest tr = new GenerateTestRequest();
+        tr.setTitle("Quiz");
+        Test result = courseService.generateTest(1L, tr, jwt);
 
-        verify(ragClient, times(2)).generateQuiz(eq("course_1"), eq(null), eq(null), eq(null));
+        verify(ragClient, times(2)).generateQuiz(eq("course_1"), eq(null), eq(null), eq(null), isNull(), isNull());
         verify(qualityGate, times(1)).validateAndDeduplicateRagQuestions(firstRag);
         verify(qualityGate, times(1)).validateAndDeduplicateRagQuestions(secondRag);
         assertThat(result.getId()).isEqualTo(100L);
@@ -216,15 +228,18 @@ class CourseServiceQualityGateTest {
     void generateTest_throwsWhenQualityGateFailsAfterRegenerate() {
         when(courseRepository.findById(1L)).thenReturn(Optional.of(course));
         List<RagQuizQuestionDto> badQuestions = List.of(ragQuestion("short", ""));
-        when(ragClient.generateQuiz(eq("course_1"), eq(null), eq(null), eq(null))).thenReturn(badQuestions);
+        when(ragClient.generateQuiz(eq("course_1"), eq(null), eq(null), eq(null), isNull(), isNull()))
+                .thenReturn(badQuestions);
         when(qualityGate.validateAndDeduplicateRagQuestions(any()))
                 .thenThrow(new QualityGateException("No questions passed"));
 
-        assertThatThrownBy(() -> courseService.generateTest(1L, null, null, "Quiz", jwt))
+        GenerateTestRequest tr = new GenerateTestRequest();
+        tr.setTitle("Quiz");
+        assertThatThrownBy(() -> courseService.generateTest(1L, tr, jwt))
                 .isInstanceOf(QualityGateException.class)
                 .hasMessageContaining("No questions passed");
 
-        verify(ragClient, times(2)).generateQuiz(eq("course_1"), eq(null), eq(null), eq(null));
+        verify(ragClient, times(2)).generateQuiz(eq("course_1"), eq(null), eq(null), eq(null), isNull(), isNull());
         verify(testRepository, never()).save(any());
     }
 }

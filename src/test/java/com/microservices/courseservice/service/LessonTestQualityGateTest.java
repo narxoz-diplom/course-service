@@ -103,6 +103,19 @@ class LessonTestQualityGateTest {
     }
 
     @Test
+    void validateAndDeduplicateRagLessons_removesNearDuplicateBodiesByJaccard() {
+        LessonTestQualityGate strict = new LessonTestQualityGate(2, 50, 10, 1, 0.55);
+        String a = "Machine learning introduction covers supervised and unsupervised models with practical tasks.";
+        String b = a + " Extra sentence about evaluation metrics.";
+        List<RagLessonDto> input = List.of(
+                ragLesson("Lesson A", a + " " + a),
+                ragLesson("Lesson B", b + " " + b)
+        );
+        List<RagLessonDto> result = strict.validateAndDeduplicateRagLessons(input, List.of());
+        assertThat(result).hasSize(1);
+    }
+
+    @Test
     void validateAndDeduplicateRagLessons_throwsWhenAllFilteredOut() {
         List<RagLessonDto> input = List.of(ragLesson("A", "short"));
         assertThatThrownBy(() -> qualityGate.validateAndDeduplicateRagLessons(input, List.of()))
