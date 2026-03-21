@@ -173,9 +173,12 @@ public class CourseService {
     public void deleteCourse(Long id, Jwt jwt) {
         Course course = getCourseById(id);
         validateCourseDeletePermission(course, jwt);
-        
+
+        // test_attempts FK → tests: remove attempts first (deleteById may not load lazy collections).
+        testAttemptRepository.deleteByCourseId(id);
+
         courseRepository.deleteById(id);
-        
+
         courseCacheService.invalidateCacheOnDelete(course);
     }
 

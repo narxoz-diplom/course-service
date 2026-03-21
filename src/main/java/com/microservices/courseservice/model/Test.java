@@ -1,5 +1,6 @@
 package com.microservices.courseservice.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
@@ -35,6 +36,10 @@ public class Test {
     @OneToMany(mappedBy = "test", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonManagedReference("test-questions")
     private List<Question> questions = new ArrayList<>();
+
+    @OneToMany(mappedBy = "test", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
+    private List<TestAttempt> attempts = new ArrayList<>();
 
     @Column(nullable = false)
     private LocalDateTime createdAt;
