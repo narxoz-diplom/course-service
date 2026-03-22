@@ -12,6 +12,7 @@ import com.microservices.courseservice.dto.LessonOutlineItemDto;
 import com.microservices.courseservice.dto.RagLessonDto;
 import com.microservices.courseservice.dto.RagQuizQuestionDto;
 import com.microservices.courseservice.dto.VideoMetadataRequest;
+import com.microservices.courseservice.event.CourseVectorCleanupEvent;
 import com.microservices.courseservice.exception.QualityGateException;
 import com.microservices.courseservice.mapper.CourseMapper;
 import com.microservices.courseservice.mapper.VideoMapper;
@@ -22,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,6 +53,7 @@ public class CourseService {
     private final TestAttemptRepository testAttemptRepository;
     private final QuestionRepository questionRepository;
     private final LessonTestQualityGate qualityGate;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     @Transactional
     public Course createCourse(Course course, Jwt jwt) {
@@ -187,6 +190,7 @@ public class CourseService {
         courseRepository.deleteById(id);
 
         courseCacheService.invalidateCacheOnDelete(course);
+        applicationEventPublisher.publishEvent(new CourseVectorCleanupEvent(id));
     }
 
     @Transactional

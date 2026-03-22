@@ -18,6 +18,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.oauth2.jwt.Jwt;
 
 import java.util.HashMap;
@@ -53,6 +54,7 @@ class CourseServiceQualityGateTest {
     @Mock private FileServiceClient fileServiceClient;
     @Mock private CourseMapper courseMapper;
     @Mock private VideoMapper videoMapper;
+    @Mock private ApplicationEventPublisher applicationEventPublisher;
 
     private CourseService courseService;
     private Course course;
@@ -64,7 +66,8 @@ class CourseServiceQualityGateTest {
                 courseRepository, lessonRepository, videoRepository,
                 courseCacheService, lessonService, cacheService, courseMapper, videoMapper,
                 authServiceClient, fileServiceClient, ragClient,
-                testRepository, testAttemptRepository, questionRepository, qualityGate);
+                testRepository, testAttemptRepository, questionRepository, qualityGate,
+                applicationEventPublisher);
         course = new Course();
         course.setId(1L);
         course.setTitle("Test Course");

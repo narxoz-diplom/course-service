@@ -1,5 +1,6 @@
 package com.microservices.courseservice.service;
 
+import com.microservices.courseservice.event.LessonVectorCleanupEvent;
 import com.microservices.courseservice.model.Course;
 import com.microservices.courseservice.model.Lesson;
 import com.microservices.courseservice.repository.LessonRepository;
@@ -8,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,6 +24,7 @@ public class LessonService {
     private final LessonRepository lessonRepository;
     private final NotificationProducerService notificationProducerService;
     private final LessonTestQualityGate qualityGate;
+    private final ApplicationEventPublisher applicationEventPublisher;
 
     public List<Lesson> getLessonsByCourse(Long courseId) {
         return lessonRepository.findByCourseIdOrderByOrderNumber(courseId);
@@ -70,9 +73,11 @@ public class LessonService {
         Course course = lesson.getCourse();
         
         validateLessonUpdatePermission(course, jwt);
-        
+
+        Long courseId = course.getId();
         lessonRepository.deleteById(lessonId);
-        log.info("Deleted lesson: {} from course: {}", lessonId, course.getId());
+        applicationEventPublisher.publishEvent(new LessonVectorCleanupEvent(courseId, lessonId));
+        log.info("Deleted lesson: {} from course: {}", lessonId, courseId);
     }
 
     private void validateLessonCreationPermission(Course course, Jwt jwt) {
