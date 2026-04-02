@@ -1,5 +1,6 @@
 package com.microservices.courseservice.controller;
 
+import com.microservices.courseservice.dto.AdminPlatformStatsDto;
 import com.microservices.courseservice.dto.StatusUpdateRequest;
 import com.microservices.courseservice.dto.VideoMetadataRequest;
 import com.microservices.courseservice.model.Course;
@@ -255,6 +256,11 @@ public class CourseController {
     public java.util.List<com.microservices.courseservice.model.TestAttempt> getMyTestAttempts(
             @AuthenticationPrincipal Jwt jwt) {
         return courseService.getMyTestAttempts(jwt.getSubject());
+    }
+
+    @GetMapping("/admin/platform-stats")
+    public AdminPlatformStatsDto getAdminPlatformStats(@AuthenticationPrincipal Jwt jwt) {
+        return courseService.getAdminPlatformStats(jwt);
     }
 
 }

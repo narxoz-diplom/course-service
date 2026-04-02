@@ -65,18 +65,39 @@ public class RoleUtil {
     }
 
     public static boolean isAdmin(Jwt jwt) {
-        List<String> roles = getRoles(jwt);
-        return roles.stream().anyMatch(r -> r.equalsIgnoreCase(ADMIN_ROLE));
+        return getRoles(jwt).stream().anyMatch(RoleUtil::matchesAdmin);
     }
 
     public static boolean isTeacher(Jwt jwt) {
-        List<String> roles = getRoles(jwt);
-        return roles.stream().anyMatch(r -> r.equalsIgnoreCase(TEACHER_ROLE));
+        return getRoles(jwt).stream().anyMatch(RoleUtil::matchesTeacher);
     }
 
     public static boolean isClient(Jwt jwt) {
-        List<String> roles = getRoles(jwt);
-        return roles.stream().anyMatch(r -> r.equalsIgnoreCase(CLIENT_ROLE));
+        return getRoles(jwt).stream().anyMatch(RoleUtil::matchesClient);
+    }
+
+    private static boolean matchesAdmin(String role) {
+        if (role == null || role.isBlank()) {
+            return false;
+        }
+        String r = role.trim();
+        return ADMIN_ROLE.equalsIgnoreCase(r) || "ROLE_ADMIN".equalsIgnoreCase(r);
+    }
+
+    private static boolean matchesTeacher(String role) {
+        if (role == null || role.isBlank()) {
+            return false;
+        }
+        String r = role.trim();
+        return TEACHER_ROLE.equalsIgnoreCase(r) || "ROLE_TEACHER".equalsIgnoreCase(r);
+    }
+
+    private static boolean matchesClient(String role) {
+        if (role == null || role.isBlank()) {
+            return false;
+        }
+        String r = role.trim();
+        return CLIENT_ROLE.equalsIgnoreCase(r) || "ROLE_CLIENT".equalsIgnoreCase(r);
     }
 
     public static boolean canUpload(Jwt jwt) {

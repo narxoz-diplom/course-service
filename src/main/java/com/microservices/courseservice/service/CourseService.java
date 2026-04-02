@@ -3,6 +3,7 @@ package com.microservices.courseservice.service;
 import com.microservices.courseservice.client.AuthServiceClient;
 import com.microservices.courseservice.client.FileServiceClient;
 import com.microservices.courseservice.client.RagClient;
+import com.microservices.courseservice.dto.AdminPlatformStatsDto;
 import com.microservices.courseservice.dto.CourseOutlineResponse;
 import com.microservices.courseservice.dto.GenerateFromOutlineRequest;
 import com.microservices.courseservice.dto.GenerateLessonsRequest;
@@ -659,5 +660,33 @@ public class CourseService {
     private int calculateNextVideoOrder(Long lessonId) {
         List<Video> existingVideos = videoRepository.findByLessonIdOrderByOrderNumber(lessonId);
         return existingVideos.isEmpty() ? 1 : existingVideos.get(existingVideos.size() - 1).getOrderNumber() + 1;
+    }
+
+    public AdminPlatformStatsDto getAdminPlatformStats(Jwt jwt) {
+        if (!RoleUtil.isAdmin(jwt)) {
+            throw new AccessDeniedException("Admin only");
+        }
+        List<Course> all = courseRepository.findAll();
+        long published = all.stream().filter(c -> c.getStatus() == Course.CourseStatus.PUBLISHED).count();
+        long draft = all.stream().filter(c -> c.getStatus() == Course.CourseStatus.DRAFT).count();
+        long archived = all.stream().filter(c -> c.getStatus() == Course.CourseStatus.ARCHIVED).count();
+        long enrollmentSlots = all.stream()
+                .mapToLong(c -> c.getEnrolledStudents() == null ? 0 : c.getEnrolledStudents().size())
+                .sum();
+        long uniqueInstructors = all.stream()
+                .map(Course::getInstructorId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .count();
+        return AdminPlatformStatsDto.builder()
+                .totalCourses(all.size())
+                .uniqueInstructors(uniqueInstructors)
+                .publishedCourses(published)
+                .draftCourses(draft)
+                .archivedCourses(archived)
+                .totalLessons(lessonRepository.count())
+                .totalTests(testRepository.count())
+                .totalEnrollmentSlots(enrollmentSlots)
+                .build();
     }
 }
