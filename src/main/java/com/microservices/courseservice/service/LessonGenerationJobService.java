@@ -84,6 +84,9 @@ public class LessonGenerationJobService {
                 .jobId(job.getId())
                 .status(job.getStatus().name())
                 .createdLessonIds(job.getCreatedLessonIds())
+                .totalLessons(job.getTotalLessons())
+                .completedLessons(job.getCompletedLessons())
+                .currentLessonTitle(job.getCurrentLessonTitle())
                 .errorMessage(job.getErrorMessage())
                 .build();
     }

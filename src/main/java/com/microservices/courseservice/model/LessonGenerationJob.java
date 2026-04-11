@@ -35,6 +35,15 @@ public class LessonGenerationJob {
     @Column(columnDefinition = "TEXT")
     private String createdLessonIds;
 
+    /** Total outline items in the current job (after filtering empty titles). */
+    private Integer totalLessons;
+
+    /** Successfully persisted lessons so far (incremental jobs). */
+    private Integer completedLessons;
+
+    @Column(length = 512)
+    private String currentLessonTitle;
+
     @Column(columnDefinition = "TEXT")
     private String errorMessage;
 

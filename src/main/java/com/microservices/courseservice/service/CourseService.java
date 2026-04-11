@@ -20,19 +20,23 @@ import com.microservices.courseservice.mapper.VideoMapper;
 import com.microservices.courseservice.model.*;
 import com.microservices.courseservice.repository.*;
 import com.microservices.courseservice.util.RoleUtil;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -55,6 +59,17 @@ public class CourseService {
     private final QuestionRepository questionRepository;
     private final LessonTestQualityGate qualityGate;
     private final ApplicationEventPublisher applicationEventPublisher;
+    private final OutlineLessonStepService outlineLessonStepService;
+    private final LessonGenerationJobRepository lessonGenerationJobRepository;
+    private final PlatformTransactionManager transactionManager;
+
+    private TransactionTemplate readOnlyCourseTx;
+
+    @PostConstruct
+    void initReadOnlyCourseTemplate() {
+        readOnlyCourseTx = new TransactionTemplate(transactionManager);
+        readOnlyCourseTx.setReadOnly(true);
+    }
 
     @Transactional
     public Course createCourse(Course course, Jwt jwt) {
@@ -72,17 +87,25 @@ public class CourseService {
         return getCourseById(id, null);
     }
 
+    /**
+     * Uses an explicit read-only {@link TransactionTemplate} so lazy collections initialize while the session is open.
+     * Works for {@code @Async} and other internal callers (unlike {@code @Transactional} on a method called via {@code this}).
+     */
     public Course getCourseById(Long id, Jwt jwt) {
-        Course course = courseRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Course not found with id: " + id));
-        if (jwt != null && !RoleUtil.isAdmin(jwt) && !RoleUtil.isTeacher(jwt)) {
-            validateStudentCourseAccess(course, jwt);
-        }
-        if (course.getLessons() != null) {
-            course.getLessons().size();
-        }
-        incrementCourseViews(id);
-        return course;
+        return readOnlyCourseTx.execute(
+                status -> {
+                    Course course = courseRepository
+                            .findById(id)
+                            .orElseThrow(() -> new RuntimeException("Course not found with id: " + id));
+                    if (jwt != null && !RoleUtil.isAdmin(jwt) && !RoleUtil.isTeacher(jwt)) {
+                        validateStudentCourseAccess(course, jwt);
+                    }
+                    if (course.getLessons() != null) {
+                        course.getLessons().size();
+                    }
+                    incrementCourseViews(id);
+                    return course;
+                });
     }
 
     private void validateStudentCourseAccess(Course course, Jwt jwt) {
@@ -269,19 +292,19 @@ public class CourseService {
         return buildCourseOutlineResponse(courseId, genRequest);
     }
 
-    @Transactional
     public List<Lesson> generateLessonsFromOutline(Long courseId, GenerateFromOutlineRequest genRequest, Jwt jwt) {
         Course course = getCourseById(courseId);
         validateCourseUpdatePermission(course, jwt);
-        return generateLessonsFromOutlineAuthorized(course, courseId, genRequest, jwt);
+        return generateLessonsFromOutlineAuthorized(courseId, genRequest, jwt, null);
     }
 
     /**
      * Background generation: instructor id must match course owner (no admin bypass in jobs).
+     *
+     * @param jobId when non-null, job row is updated with incremental progress and marked COMPLETED at the end.
      */
-    @Transactional
     public List<Lesson> generateLessonsFromOutlineForInstructor(
-            Long courseId, GenerateFromOutlineRequest genRequest, String instructorId) {
+            Long courseId, GenerateFromOutlineRequest genRequest, String instructorId, String jobId) {
         Course course = getCourseById(courseId);
         if (!course.getInstructorId().equals(instructorId)) {
             throw new AccessDeniedException("Only course instructor can generate lessons for this course");
@@ -291,14 +314,18 @@ public class CourseService {
                 .subject(instructorId)
                 .claim("realm_access", Map.of("roles", List.of("teacher")))
                 .build();
-        return generateLessonsFromOutlineAuthorized(course, courseId, genRequest, jobJwt);
+        return generateLessonsFromOutlineAuthorized(courseId, genRequest, jobJwt, jobId);
     }
 
+    /**
+     * Each lesson is persisted in its own transaction ({@link OutlineLessonStepService}) so a failure late in the job
+     * does not roll back earlier lessons. Optional {@code jobId} ties into {@link LessonGenerationJob} progress fields.
+     */
     private List<Lesson> generateLessonsFromOutlineAuthorized(
-            Course course,
             Long courseId,
             GenerateFromOutlineRequest genRequest,
-            Jwt jwt) {
+            Jwt jwt,
+            String jobId) {
         if (genRequest.getOutline() == null || genRequest.getOutline().isEmpty()) {
             throw new RuntimeException("Outline must contain at least one lesson");
         }
@@ -317,43 +344,61 @@ public class CourseService {
         List<Lesson> created = new ArrayList<>();
         LessonGenerationParamsDto params = genRequest.getParams();
         int total = items.size();
-        int idx = 1;
-        for (LessonOutlineItemDto item : items) {
-            RagLessonDto dto = ragClient.generateSingleLesson(
-                    collectionName,
-                    filterFileIds,
-                    item.getTitle(),
-                    item.getSummary() != null ? item.getSummary() : "",
-                    idx,
-                    total,
-                    24,
-                    params);
+
+        if (jobId != null) {
+            lessonGenerationJobRepository.findById(jobId).ifPresent(job -> {
+                job.setTotalLessons(total);
+                job.setCompletedLessons(0);
+                job.setCurrentLessonTitle(items.isEmpty() ? null : items.get(0).getTitle());
+                lessonGenerationJobRepository.save(job);
+            });
+        }
+
+        for (int i = 0; i < items.size(); i++) {
+            LessonOutlineItemDto item = items.get(i);
+            int lessonNum = i + 1;
+            if (jobId != null) {
+                final String title = item.getTitle();
+                lessonGenerationJobRepository.findById(jobId).ifPresent(job -> {
+                    job.setCurrentLessonTitle(title);
+                    lessonGenerationJobRepository.save(job);
+                });
+            }
             List<Lesson> prior = new ArrayList<>(existingLessons);
             prior.addAll(created);
-            List<RagLessonDto> validated = qualityGate.validateAndDeduplicateRagLessons(List.of(dto), prior);
-            if (validated.isEmpty()) {
-                throw new QualityGateException("Generated lesson did not pass quality gate: " + item.getTitle());
-            }
-            RagLessonDto rl = validated.get(0);
-            Lesson lesson = new Lesson();
-            lesson.setTitle(rl.getTitle() != null && !rl.getTitle().isBlank() ? rl.getTitle() : item.getTitle());
-            lesson.setContent(rl.getContent() != null ? rl.getContent() : "");
-            lesson.setDescription(rl.getDescription() != null ? rl.getDescription() : "");
-            lesson.setOrderNumber(idx);
-            lesson.setCourse(course);
-            Lesson saved = lessonService.createLesson(lesson, course, jwt);
+            Lesson saved = outlineLessonStepService.generateAndPersistOne(
+                    courseId,
+                    collectionName,
+                    filterFileIds,
+                    item,
+                    lessonNum,
+                    total,
+                    prior,
+                    params,
+                    jwt);
             created.add(saved);
-            String content = rl.getContent() != null ? rl.getContent() : "";
-            if (!content.isBlank()) {
-                try {
-                    ragClient.vectorizeText(content, collectionName,
-                            Map.of("lesson_id", String.valueOf(saved.getId()), "course_id", String.valueOf(courseId)));
-                } catch (Exception e) {
-                    log.warn("Failed to vectorize lesson {}: {}", saved.getId(), e.getMessage());
-                }
+            if (jobId != null) {
+                lessonGenerationJobRepository.findById(jobId).ifPresent(job -> {
+                    job.setCompletedLessons(created.size());
+                    job.setCreatedLessonIds(
+                            created.stream().map(l -> String.valueOf(l.getId())).collect(Collectors.joining(",")));
+                    lessonGenerationJobRepository.save(job);
+                });
             }
-            idx++;
         }
+
+        if (jobId != null) {
+            lessonGenerationJobRepository.findById(jobId).ifPresent(job -> {
+                job.setStatus(LessonGenerationJob.Status.COMPLETED);
+                job.setCompletedLessons(created.size());
+                job.setCreatedLessonIds(
+                        created.stream().map(l -> String.valueOf(l.getId())).collect(Collectors.joining(",")));
+                job.setCurrentLessonTitle(null);
+                job.setErrorMessage(null);
+                lessonGenerationJobRepository.save(job);
+            });
+        }
+
         return created;
     }
 

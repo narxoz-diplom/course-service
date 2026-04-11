@@ -9,5 +9,8 @@ public class LessonGenerationJobDto {
     private String jobId;
     private String status;
     private String createdLessonIds;
+    private Integer totalLessons;
+    private Integer completedLessons;
+    private String currentLessonTitle;
     private String errorMessage;
 }
