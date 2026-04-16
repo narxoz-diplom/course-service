@@ -448,4 +448,45 @@ public class RagClient {
                 .onErrorMap(RagClient::mapToRagClientException)
                 .block();
     }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> translateJson(Map<String, Object> payload, String targetLanguage) {
+        var request = new java.util.HashMap<String, Object>();
+        request.put("payload", payload != null ? payload : Map.of());
+        request.put("target_language", targetLanguage);
+
+        Map<String, Object> response = webClient.post()
+                .uri("/api/v1/translate-json")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(request)
+                .retrieve()
+                .onStatus(
+                        status -> status.is4xxClientError() || status.is5xxServerError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                                .defaultIfEmpty("")
+                                .map(body -> {
+                                    String message = "RAG translate-json failed with status " + clientResponse.statusCode().value();
+                                    if (!body.isBlank()) {
+                                        message += ": " + body;
+                                    }
+                                    return new RagClientException(message);
+                                })
+                )
+                .bodyToMono(Map.class)
+                .timeout(timeout)
+                .retryWhen(Retry.backoff(retryMaxAttempts - 1, retryFirstBackoff)
+                        .filter(RagClient::isTransient)
+                        .doBeforeRetry(s -> log.warn("RAG translate-json retry attempt {} after: {}", s.totalRetries() + 1, s.failure().getMessage())))
+                .onErrorMap(RagClient::mapToRagClientException)
+                .block();
+
+        if (response == null) {
+            throw new RagClientException("RAG translate-json returned null response");
+        }
+        Object translatedPayload = response.get("payload");
+        if (!(translatedPayload instanceof Map<?, ?> mapPayload)) {
+            throw new RagClientException("RAG translate-json returned invalid payload");
+        }
+        return (Map<String, Object>) mapPayload;
+    }
 }

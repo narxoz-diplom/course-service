@@ -34,6 +34,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -778,5 +779,175 @@ public class CourseService {
                 .totalTests(testRepository.count())
                 .totalEnrollmentSlots(enrollmentSlots)
                 .build();
+    }
+
+    @Transactional
+    public Map<String, Object> backfillLocalizations(Long courseId, Jwt jwt) {
+        Course course = getCourseById(courseId);
+        validateCourseUpdatePermission(course, jwt);
+
+        int coursesUpdated = 0;
+        int lessonsUpdated = 0;
+        int testsUpdated = 0;
+        int questionsUpdated = 0;
+
+        if (backfillCourse(course)) {
+            courseRepository.save(course);
+            coursesUpdated++;
+        }
+
+        List<Lesson> lessons = lessonRepository.findByCourseIdOrderByOrderNumber(courseId);
+        for (Lesson lesson : lessons) {
+            if (backfillLesson(lesson)) {
+                lessonRepository.save(lesson);
+                lessonsUpdated++;
+            }
+        }
+
+        List<Test> tests = testRepository.findByCourseId(courseId);
+        for (Test test : tests) {
+            boolean testChanged = backfillTest(test);
+            List<Question> questions = questionRepository.findByTestIdOrderByOrderNumber(test.getId());
+            int updatedQuestionsForTest = 0;
+            for (Question question : questions) {
+                if (backfillQuestion(question)) {
+                    questionRepository.save(question);
+                    updatedQuestionsForTest++;
+                    questionsUpdated++;
+                }
+            }
+            if (testChanged) {
+                testRepository.save(test);
+                testsUpdated++;
+            }
+        }
+
+        return Map.of(
+                "courseId", courseId,
+                "coursesUpdated", coursesUpdated,
+                "lessonsUpdated", lessonsUpdated,
+                "testsUpdated", testsUpdated,
+                "questionsUpdated", questionsUpdated
+        );
+    }
+
+    private boolean backfillCourse(Course course) {
+        boolean needsKz = isBlank(course.getTitleKz()) || isBlank(course.getDescriptionKz());
+        boolean needsEn = isBlank(course.getTitleEn()) || isBlank(course.getDescriptionEn());
+        if (!needsKz && !needsEn) return false;
+        if (isBlank(course.getTitle()) && isBlank(course.getDescription())) return false;
+
+        if (needsKz) {
+            Map<String, Object> tr = ragClient.translateJson(Map.of(
+                    "title", nvl(course.getTitle()),
+                    "description", nvl(course.getDescription())
+            ), "kz");
+            if (isBlank(course.getTitleKz())) course.setTitleKz(str(tr.get("title")));
+            if (isBlank(course.getDescriptionKz())) course.setDescriptionKz(str(tr.get("description")));
+        }
+        if (needsEn) {
+            Map<String, Object> tr = ragClient.translateJson(Map.of(
+                    "title", nvl(course.getTitle()),
+                    "description", nvl(course.getDescription())
+            ), "en");
+            if (isBlank(course.getTitleEn())) course.setTitleEn(str(tr.get("title")));
+            if (isBlank(course.getDescriptionEn())) course.setDescriptionEn(str(tr.get("description")));
+        }
+        return true;
+    }
+
+    private boolean backfillLesson(Lesson lesson) {
+        boolean needsKz = isBlank(lesson.getTitleKz()) || isBlank(lesson.getDescriptionKz()) || isBlank(lesson.getContentKz());
+        boolean needsEn = isBlank(lesson.getTitleEn()) || isBlank(lesson.getDescriptionEn()) || isBlank(lesson.getContentEn());
+        if (!needsKz && !needsEn) return false;
+        if (isBlank(lesson.getTitle()) && isBlank(lesson.getDescription()) && isBlank(lesson.getContent())) return false;
+
+        Map<String, Object> source = new HashMap<>();
+        source.put("title", nvl(lesson.getTitle()));
+        source.put("description", nvl(lesson.getDescription()));
+        source.put("content", nvl(lesson.getContent()));
+
+        if (needsKz) {
+            Map<String, Object> tr = ragClient.translateJson(source, "kz");
+            if (isBlank(lesson.getTitleKz())) lesson.setTitleKz(str(tr.get("title")));
+            if (isBlank(lesson.getDescriptionKz())) lesson.setDescriptionKz(str(tr.get("description")));
+            if (isBlank(lesson.getContentKz())) lesson.setContentKz(str(tr.get("content")));
+        }
+        if (needsEn) {
+            Map<String, Object> tr = ragClient.translateJson(source, "en");
+            if (isBlank(lesson.getTitleEn())) lesson.setTitleEn(str(tr.get("title")));
+            if (isBlank(lesson.getDescriptionEn())) lesson.setDescriptionEn(str(tr.get("description")));
+            if (isBlank(lesson.getContentEn())) lesson.setContentEn(str(tr.get("content")));
+        }
+        return true;
+    }
+
+    private boolean backfillTest(Test test) {
+        boolean needsKz = isBlank(test.getTitleKz());
+        boolean needsEn = isBlank(test.getTitleEn());
+        if (!needsKz && !needsEn) return false;
+        if (isBlank(test.getTitle())) return false;
+
+        if (needsKz) {
+            Map<String, Object> tr = ragClient.translateJson(Map.of("title", nvl(test.getTitle())), "kz");
+            if (isBlank(test.getTitleKz())) test.setTitleKz(str(tr.get("title")));
+        }
+        if (needsEn) {
+            Map<String, Object> tr = ragClient.translateJson(Map.of("title", nvl(test.getTitle())), "en");
+            if (isBlank(test.getTitleEn())) test.setTitleEn(str(tr.get("title")));
+        }
+        return true;
+    }
+
+    private boolean backfillQuestion(Question question) {
+        boolean needsKz = isBlank(question.getTextKz()) || isBlank(question.getOptionsKz())
+                || isBlank(question.getExplanationKz()) || isBlank(question.getHintKz());
+        boolean needsEn = isBlank(question.getTextEn()) || isBlank(question.getOptionsEn())
+                || isBlank(question.getExplanationEn()) || isBlank(question.getHintEn());
+        if (!needsKz && !needsEn) return false;
+
+        Map<String, Object> source = new HashMap<>();
+        source.put("text", nvl(question.getText()));
+        source.put("options", parseJsonObject(question.getOptions()));
+        source.put("explanation", nvl(question.getExplanation()));
+        source.put("hint", nvl(question.getHint()));
+
+        if (needsKz) {
+            Map<String, Object> tr = ragClient.translateJson(source, "kz");
+            if (isBlank(question.getTextKz())) question.setTextKz(str(tr.get("text")));
+            if (isBlank(question.getOptionsKz())) question.setOptionsKz(toJson(tr.get("options")));
+            if (isBlank(question.getExplanationKz())) question.setExplanationKz(str(tr.get("explanation")));
+            if (isBlank(question.getHintKz())) question.setHintKz(str(tr.get("hint")));
+        }
+        if (needsEn) {
+            Map<String, Object> tr = ragClient.translateJson(source, "en");
+            if (isBlank(question.getTextEn())) question.setTextEn(str(tr.get("text")));
+            if (isBlank(question.getOptionsEn())) question.setOptionsEn(toJson(tr.get("options")));
+            if (isBlank(question.getExplanationEn())) question.setExplanationEn(str(tr.get("explanation")));
+            if (isBlank(question.getHintEn())) question.setHintEn(str(tr.get("hint")));
+        }
+        return true;
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
+    }
+
+    private static String nvl(String s) {
+        return s == null ? "" : s;
+    }
+
+    private static String str(Object o) {
+        return o == null ? "" : String.valueOf(o);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object parseJsonObject(String raw) {
+        if (raw == null || raw.isBlank()) return Map.of();
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(raw, Map.class);
+        } catch (Exception e) {
+            return raw;
+        }
     }
 }

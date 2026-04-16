@@ -211,6 +211,13 @@ public class CourseController {
         return cacheService.getCounter(viewKey);
     }
 
+    @PostMapping("/{courseId}/backfill-localizations")
+    public ResponseEntity<java.util.Map<String, Object>> backfillLocalizations(
+            @PathVariable Long courseId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok(courseService.backfillLocalizations(courseId, jwt));
+    }
+
     @PostMapping("/{courseId}/tests/generate")
     @ResponseStatus(HttpStatus.CREATED)
     public com.microservices.courseservice.model.Test generateTest(
