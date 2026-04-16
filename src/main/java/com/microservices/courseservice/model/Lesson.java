@@ -31,6 +31,25 @@ public class Lesson {
     @Column(length = 5000)
     private String description;
 
+    // Optional localized variants (generated).
+    @Column
+    private String titleKz;
+
+    @Column
+    private String titleEn;
+
+    @Column(columnDefinition = "TEXT")
+    private String contentKz;
+
+    @Column(columnDefinition = "TEXT")
+    private String contentEn;
+
+    @Column(length = 5000)
+    private String descriptionKz;
+
+    @Column(length = 5000)
+    private String descriptionEn;
+
     @Column(nullable = false)
     private Integer orderNumber;
 

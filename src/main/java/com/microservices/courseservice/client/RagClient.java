@@ -141,6 +141,16 @@ public class RagClient {
             String prompt,
             Integer topK,
             LessonGenerationParamsDto params) {
+        return generateLessonsResponse(collectionName, fileIds, prompt, topK, params, null).getLessons();
+    }
+
+    public RagLessonsResponse generateLessonsResponse(
+            String collectionName,
+            List<Long> fileIds,
+            String prompt,
+            Integer topK,
+            LessonGenerationParamsDto params,
+            List<String> languages) {
         var request = new java.util.HashMap<String, Object>();
         request.put("collection_name", collectionName);
         String p = prompt != null && !prompt.isBlank() ? prompt
@@ -153,6 +163,9 @@ public class RagClient {
         request.put("top_k", k);
         if (fileIds != null && !fileIds.isEmpty()) {
             request.put("file_ids", fileIds.stream().map(String::valueOf).toList());
+        }
+        if (languages != null && !languages.isEmpty()) {
+            request.put("languages", languages);
         }
         putGenerationParams(request, params);
 
@@ -187,7 +200,7 @@ public class RagClient {
         if (response.getLessons() == null) {
             throw new RagClientException("RAG generate-lessons returned invalid format: 'lessons' field is missing");
         }
-        return response.getLessons();
+        return response;
     }
 
     public CourseOutlineResponse generateCourseOutline(
@@ -251,6 +264,20 @@ public class RagClient {
             int totalLessons,
             int topK,
             LessonGenerationParamsDto params) {
+        return generateSingleLessonResponse(collectionName, fileIds, title, summary, lessonIndex, totalLessons, topK, params, null)
+                .getLessons().get(0);
+    }
+
+    public RagLessonsResponse generateSingleLessonResponse(
+            String collectionName,
+            List<Long> fileIds,
+            String title,
+            String summary,
+            int lessonIndex,
+            int totalLessons,
+            int topK,
+            LessonGenerationParamsDto params,
+            List<String> languages) {
         var request = new java.util.HashMap<String, Object>();
         request.put("collection_name", collectionName);
         request.put("title", title);
@@ -260,6 +287,9 @@ public class RagClient {
         request.put("top_k", Math.min(Math.max(topK, 1), 80));
         if (fileIds != null && !fileIds.isEmpty()) {
             request.put("file_ids", fileIds.stream().map(String::valueOf).toList());
+        }
+        if (languages != null && !languages.isEmpty()) {
+            request.put("languages", languages);
         }
         putGenerationParams(request, params);
 
@@ -293,7 +323,7 @@ public class RagClient {
         if (response == null || response.getLessons() == null || response.getLessons().isEmpty()) {
             throw new RagClientException("RAG generate-single-lesson-lms returned no lesson");
         }
-        return response.getLessons().get(0);
+        return response;
     }
 
     /**
@@ -317,6 +347,17 @@ public class RagClient {
             String prompt,
             Integer questionCount,
             String difficulty) {
+        return generateQuizResponse(collectionName, fileIds, lessonIds, prompt, questionCount, difficulty, null).getQuestions();
+    }
+
+    public RagQuizResponse generateQuizResponse(
+            String collectionName,
+            List<Long> fileIds,
+            List<Long> lessonIds,
+            String prompt,
+            Integer questionCount,
+            String difficulty,
+            List<String> languages) {
         var requestBuilder = new java.util.HashMap<String, Object>();
         requestBuilder.put("collection_name", collectionName);
         requestBuilder.put("prompt", prompt != null ? prompt : "Создай тест по загруженным материалам.");
@@ -332,6 +373,9 @@ public class RagClient {
         }
         if (difficulty != null && !difficulty.isBlank()) {
             requestBuilder.put("difficulty", difficulty);
+        }
+        if (languages != null && !languages.isEmpty()) {
+            requestBuilder.put("languages", languages);
         }
 
         RagQuizResponse response = webClient.post()
@@ -365,7 +409,7 @@ public class RagClient {
         if (response.getQuestions() == null) {
             throw new RagClientException("RAG generate-quiz returned invalid format: 'questions' field is missing");
         }
-        return response.getQuestions();
+        return response;
     }
 
     /**

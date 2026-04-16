@@ -25,6 +25,12 @@ public class Test {
     @Column(nullable = false)
     private String title;
 
+    @Column
+    private String titleKz;
+
+    @Column
+    private String titleEn;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "course_id", nullable = false)
     @com.fasterxml.jackson.annotation.JsonBackReference("course-tests")

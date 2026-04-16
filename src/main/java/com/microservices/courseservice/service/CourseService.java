@@ -254,13 +254,18 @@ public class CourseService {
         }
 
         List<Lesson> existingLessons = lessonService.getLessonsByCourse(courseId);
-        List<RagLessonDto> ragLessons = ragClient.generateLessons(
-                collectionName, filterFileIds, prompt, genRequest.getTopK(), genRequest.getParams());
+        var ragResponse = ragClient.generateLessonsResponse(
+                collectionName,
+                filterFileIds,
+                prompt,
+                genRequest.getTopK(),
+                genRequest.getParams(),
+                List.of("ru", "kz", "en"));
         List<RagLessonDto> validatedLessons = validateLessonsWithRetry(
                 collectionName, filterFileIds, prompt, genRequest.getTopK(), genRequest.getParams(),
-                ragLessons, existingLessons);
+                ragResponse.getLessons(), existingLessons);
 
-        return persistRagLessons(course, courseId, collectionName, validatedLessons, jwt);
+        return persistRagLessons(course, courseId, collectionName, validatedLessons, ragResponse, jwt);
     }
 
     public CourseOutlineResponse generateLessonOutline(Long courseId, GenerateLessonsRequest genRequest, Jwt jwt) {
@@ -407,16 +412,31 @@ public class CourseService {
             Long courseId,
             String collectionName,
             List<RagLessonDto> validatedLessons,
+            com.microservices.courseservice.dto.RagLessonsResponse ragResponse,
             Jwt jwt) {
         List<Lesson> created = new ArrayList<>();
+        var tr = ragResponse != null ? ragResponse.getTranslations() : null;
+        var kz = tr != null ? tr.get("kz") : null;
+        var en = tr != null ? tr.get("en") : null;
         int order = 1;
-        for (RagLessonDto rl : validatedLessons) {
+        for (int idx = 0; idx < validatedLessons.size(); idx++) {
+            RagLessonDto rl = validatedLessons.get(idx);
             Lesson lesson = new Lesson();
             String title = rl.getTitle() != null && !rl.getTitle().isBlank() ? rl.getTitle() : "Урок " + order;
             lesson.setTitle(title);
             lesson.setContent(rl.getContent() != null ? rl.getContent() : "");
             lesson.setDescription(rl.getDescription() != null ? rl.getDescription() : "");
             lesson.setOrderNumber(rl.getOrder() != null && rl.getOrder() >= 1 ? rl.getOrder() : order);
+            if (kz != null && idx < kz.size() && kz.get(idx) != null) {
+                lesson.setTitleKz(kz.get(idx).getTitle());
+                lesson.setContentKz(kz.get(idx).getContent());
+                lesson.setDescriptionKz(kz.get(idx).getDescription());
+            }
+            if (en != null && idx < en.size() && en.get(idx) != null) {
+                lesson.setTitleEn(en.get(idx).getTitle());
+                lesson.setContentEn(en.get(idx).getContent());
+                lesson.setDescriptionEn(en.get(idx).getDescription());
+            }
             lesson.setCourse(course);
             Lesson saved = lessonService.createLesson(lesson, course, jwt);
             created.add(saved);
@@ -464,25 +484,38 @@ public class CourseService {
             filterFileIds = resolveCourseFileFilter(courseId, fileIds);
         }
 
-        List<RagQuizQuestionDto> ragQuestions = ragClient.generateQuiz(
+        var quizResponse = ragClient.generateQuizResponse(
                 collectionName,
                 filterFileIds,
                 lessonIds,
                 null,
                 testRequest.getQuestionCount(),
-                testRequest.getDifficulty());
+                testRequest.getDifficulty(),
+                List.of("ru", "kz", "en"));
         List<RagQuizQuestionDto> validatedQuestions = validateQuestionsWithRetry(
-                collectionName, filterFileIds, lessonIds, testRequest.getQuestionCount(), testRequest.getDifficulty(), ragQuestions);
+                collectionName,
+                filterFileIds,
+                lessonIds,
+                testRequest.getQuestionCount(),
+                testRequest.getDifficulty(),
+                quizResponse.getQuestions());
 
         String title = testRequest.getTitle();
         Test test = new Test();
-        test.setTitle(title != null && !title.isBlank() ? title : "Тест по курсу");
+        String baseTitle = title != null && !title.isBlank() ? title : "Тест по курсу";
+        test.setTitle(baseTitle);
+        // Best-effort: if quiz has translations, title is derived; keep null unless teacher provided custom.
         test.setCourse(course);
         test.setIsVisible(true);
         test = testRepository.save(test);
 
+        var tr = quizResponse.getTranslations();
+        var kzTr = tr != null ? tr.get("kz") : null;
+        var enTr = tr != null ? tr.get("en") : null;
+
         int order = 1;
-        for (RagQuizQuestionDto rq : validatedQuestions) {
+        for (int idx = 0; idx < validatedQuestions.size(); idx++) {
+            RagQuizQuestionDto rq = validatedQuestions.get(idx);
             Question q = new Question();
             q.setType(Question.QuestionType.MULTIPLE_CHOICE);
             q.setText(rq.getQuestion() != null ? rq.getQuestion() : "");
@@ -491,6 +524,18 @@ public class CourseService {
             q.setCorrectAnswer(rq.getCorrect() != null ? rq.getCorrect() : "");
             q.setExplanation(rq.getExplanation() != null ? rq.getExplanation() : "");
             q.setHint(rq.getHint() != null ? rq.getHint() : "");
+            if (kzTr != null && idx < kzTr.size() && kzTr.get(idx) != null) {
+                q.setTextKz(kzTr.get(idx).getQuestion());
+                q.setOptionsKz(kzTr.get(idx).getOptions() != null ? toJson(kzTr.get(idx).getOptions()) : null);
+                q.setExplanationKz(kzTr.get(idx).getExplanation());
+                q.setHintKz(kzTr.get(idx).getHint());
+            }
+            if (enTr != null && idx < enTr.size() && enTr.get(idx) != null) {
+                q.setTextEn(enTr.get(idx).getQuestion());
+                q.setOptionsEn(enTr.get(idx).getOptions() != null ? toJson(enTr.get(idx).getOptions()) : null);
+                q.setExplanationEn(enTr.get(idx).getExplanation());
+                q.setHintEn(enTr.get(idx).getHint());
+            }
             q.setTest(test);
             q.setOrderNumber(order++);
             qualityGate.validateQuestion(q);

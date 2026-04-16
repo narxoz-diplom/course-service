@@ -31,6 +31,8 @@ public class OutlineLessonStepService {
     private final LessonService lessonService;
     private final LessonTestQualityGate qualityGate;
 
+    private static final List<String> GEN_LANGS = List.of("ru", "kz", "en");
+
     @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
     public Lesson generateAndPersistOne(
             Long courseId,
@@ -45,7 +47,7 @@ public class OutlineLessonStepService {
         Course course = courseRepository.findById(courseId)
                 .orElseThrow(() -> new RuntimeException("Course not found with id: " + courseId));
 
-        RagLessonDto dto = ragClient.generateSingleLesson(
+        var ragResponse = ragClient.generateSingleLessonResponse(
                 collectionName,
                 filterFileIds,
                 item.getTitle(),
@@ -53,7 +55,9 @@ public class OutlineLessonStepService {
                 lessonIndexOneBased,
                 totalLessons,
                 24,
-                params);
+                params,
+                GEN_LANGS);
+        RagLessonDto dto = ragResponse.getLessons().get(0);
 
         List<RagLessonDto> validated = qualityGate.validateAndDeduplicateRagLessons(
                 List.of(dto), priorLessonsForQualityGate);
@@ -67,6 +71,20 @@ public class OutlineLessonStepService {
         lesson.setDescription(rl.getDescription() != null ? rl.getDescription() : "");
         lesson.setOrderNumber(lessonIndexOneBased);
         lesson.setCourse(course);
+
+        var tr = ragResponse.getTranslations();
+        var kz = tr != null ? tr.get("kz") : null;
+        var en = tr != null ? tr.get("en") : null;
+        if (kz != null && !kz.isEmpty() && kz.get(0) != null) {
+            lesson.setTitleKz(kz.get(0).getTitle());
+            lesson.setContentKz(kz.get(0).getContent());
+            lesson.setDescriptionKz(kz.get(0).getDescription());
+        }
+        if (en != null && !en.isEmpty() && en.get(0) != null) {
+            lesson.setTitleEn(en.get(0).getTitle());
+            lesson.setContentEn(en.get(0).getContent());
+            lesson.setDescriptionEn(en.get(0).getDescription());
+        }
 
         Lesson saved = lessonService.createLesson(lesson, course, jwt);
 

@@ -27,6 +27,19 @@ public class Course {
     @Column(length = 2000)
     private String description;
 
+    // Optional localized variants (generated or filled later). Base fields are treated as RU by default.
+    @Column
+    private String titleKz;
+
+    @Column
+    private String titleEn;
+
+    @Column(length = 2000)
+    private String descriptionKz;
+
+    @Column(length = 2000)
+    private String descriptionEn;
+
     @Column
     private String imageUrl;
 

@@ -28,6 +28,18 @@ public class Question {
     private String options;
 
     @Column(columnDefinition = "TEXT")
+    private String textKz;
+
+    @Column(columnDefinition = "TEXT")
+    private String textEn;
+
+    @Column(columnDefinition = "TEXT")
+    private String optionsKz;
+
+    @Column(columnDefinition = "TEXT")
+    private String optionsEn;
+
+    @Column(columnDefinition = "TEXT")
     private String correctAnswer;
 
     @Column(columnDefinition = "TEXT")
@@ -35,6 +47,18 @@ public class Question {
 
     @Column(columnDefinition = "TEXT")
     private String hint;
+
+    @Column(columnDefinition = "TEXT")
+    private String explanationKz;
+
+    @Column(columnDefinition = "TEXT")
+    private String explanationEn;
+
+    @Column(columnDefinition = "TEXT")
+    private String hintKz;
+
+    @Column(columnDefinition = "TEXT")
+    private String hintEn;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "test_id", nullable = false)
