@@ -75,7 +75,10 @@ public class CourseService {
     @Transactional
     public Course createCourse(Course course, Jwt jwt) {
         validateCourseCreationPermission(jwt);
-        
+        java.util.Map<String, String> labels = new java.util.HashMap<>();
+        labels.put(jwt.getSubject(), displayLabelFromJwt(jwt));
+        course.setParticipantDisplayLabels(labels);
+
         log.info("Creating course: {} by instructor: {}", course.getTitle(), course.getInstructorId());
         Course created = courseRepository.save(course);
         
@@ -104,6 +107,9 @@ public class CourseService {
                     if (course.getLessons() != null) {
                         course.getLessons().size();
                     }
+                    if (course.getParticipantDisplayLabels() != null) {
+                        course.getParticipantDisplayLabels().size();
+                    }
                     incrementCourseViews(id);
                     return course;
                 });
@@ -122,6 +128,14 @@ public class CourseService {
             return;
         }
         throw new AccessDeniedException("You do not have access to this course");
+    }
+
+    /** Instructor, enrolled student (or allowed-email), or admin — not arbitrary teacher. */
+    private void assertCanViewCourseMembers(Course course, Jwt jwt) {
+        if (RoleUtil.isAdmin(jwt)) {
+            return;
+        }
+        validateStudentCourseAccess(course, jwt);
     }
 
     public List<Course> getAllCourses(Jwt jwt) {
@@ -673,10 +687,29 @@ public class CourseService {
         return testAttemptRepository.save(attempt);
     }
 
-    public List<TestAttempt> getTestAttemptsByCourse(Long courseId, Jwt jwt) {
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public java.util.List<com.microservices.courseservice.dto.TestAttemptTeacherRowDto> getTestAttemptsByCourse(Long courseId, Jwt jwt) {
         Course course = getCourseById(courseId);
         validateCourseUpdatePermission(course, jwt);
-        return testAttemptRepository.findByTest_Course_IdOrderByCompletedAtDesc(courseId);
+        return testAttemptRepository.findByCourseIdWithTest(courseId).stream()
+                .map(this::toTeacherTestRow)
+                .toList();
+    }
+
+    private com.microservices.courseservice.dto.TestAttemptTeacherRowDto toTeacherTestRow(TestAttempt ta) {
+        Test t = ta.getTest();
+        return com.microservices.courseservice.dto.TestAttemptTeacherRowDto.builder()
+                .attemptId(ta.getId())
+                .studentId(ta.getStudentId())
+                .testId(t != null ? t.getId() : null)
+                .testTitle(t != null ? t.getTitle() : null)
+                .testTitleKz(t != null ? t.getTitleKz() : null)
+                .testTitleEn(t != null ? t.getTitleEn() : null)
+                .score(ta.getScore())
+                .maxScore(ta.getMaxScore())
+                .completedAt(ta.getCompletedAt() != null ? ta.getCompletedAt().toString() : null)
+                .suspiciousFlag(ta.getSuspiciousFlag())
+                .build();
     }
 
     public List<TestAttempt> getMyTestAttempts(String studentId) {
@@ -692,11 +725,71 @@ public class CourseService {
                 throw new AccessDeniedException("Your email is not in the allowed list for this course");
             }
         }
+        if (course.getParticipantDisplayLabels() == null) {
+            course.setParticipantDisplayLabels(new java.util.HashMap<>());
+        }
+        course.getParticipantDisplayLabels().put(studentId, displayLabelFromJwt(jwt));
         if (!course.getEnrolledStudents().contains(studentId)) {
             course.getEnrolledStudents().add(studentId);
-            courseRepository.save(course);
-            log.info("Student {} enrolled in course {}", studentId, courseId);
         }
+        courseRepository.save(course);
+        log.info("Student {} enrolled in course {}", studentId, courseId);
+        if (course.getStatus() == Course.CourseStatus.PUBLISHED) {
+            courseCacheService.invalidatePublishedCoursesCache();
+        }
+        courseCacheService.invalidateCourseCache(courseId);
+    }
+
+    private String displayLabelFromJwt(Jwt jwt) {
+        String email = jwt.getClaimAsString("email");
+        if (email != null && !email.isBlank()) {
+            return email.trim();
+        }
+        String username = jwt.getClaimAsString("preferred_username");
+        if (username != null && !username.isBlank()) {
+            return username.trim();
+        }
+        return jwt.getSubject();
+    }
+
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public com.microservices.courseservice.dto.CourseParticipantsDto getCourseParticipants(Long courseId, Jwt jwt) {
+        Course course = courseRepository.findById(courseId)
+                .orElseThrow(() -> new RuntimeException("Course not found with id: " + courseId));
+        assertCanViewCourseMembers(course, jwt);
+        if (course.getParticipantDisplayLabels() != null) {
+            course.getParticipantDisplayLabels().size();
+        }
+        if (course.getEnrolledStudents() != null) {
+            course.getEnrolledStudents().size();
+        }
+        java.util.Map<String, String> labels = course.getParticipantDisplayLabels() != null
+                ? new java.util.HashMap<>(course.getParticipantDisplayLabels())
+                : new java.util.HashMap<>();
+        String instId = course.getInstructorId();
+        com.microservices.courseservice.dto.ParticipantSummaryDto instructor =
+                com.microservices.courseservice.dto.ParticipantSummaryDto.builder()
+                        .userId(instId)
+                        .displayLabel(labels.get(instId))
+                        .role("INSTRUCTOR")
+                        .build();
+        java.util.List<String> studs = course.getEnrolledStudents() != null
+                ? new java.util.ArrayList<>(course.getEnrolledStudents())
+                : new java.util.ArrayList<>();
+        studs.sort(String::compareTo);
+        java.util.List<com.microservices.courseservice.dto.ParticipantSummaryDto> studentRows = studs.stream()
+                .filter(sid -> instId == null || !sid.equals(instId))
+                .map(sid -> com.microservices.courseservice.dto.ParticipantSummaryDto.builder()
+                        .userId(sid)
+                        .displayLabel(labels.get(sid))
+                        .role("STUDENT")
+                        .build())
+                .toList();
+        return com.microservices.courseservice.dto.CourseParticipantsDto.builder()
+                .instructor(instructor)
+                .students(studentRows)
+                .studentCount(studentRows.size())
+                .build();
     }
 
     @Transactional

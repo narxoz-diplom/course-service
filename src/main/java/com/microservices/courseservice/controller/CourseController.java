@@ -53,6 +53,13 @@ public class CourseController {
         return courseService.getAllPublishedCourses();
     }
 
+    @GetMapping("/{courseId}/participants")
+    public com.microservices.courseservice.dto.CourseParticipantsDto getCourseParticipants(
+            @PathVariable Long courseId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getCourseParticipants(courseId, jwt);
+    }
+
     @GetMapping("/{id}")
     public Course getCourse(@PathVariable Long id, @AuthenticationPrincipal Jwt jwt) {
         return courseService.getCourseById(id, jwt);
@@ -253,7 +260,7 @@ public class CourseController {
     }
 
     @GetMapping("/{courseId}/test-results")
-    public java.util.List<com.microservices.courseservice.model.TestAttempt> getTestResults(
+    public java.util.List<com.microservices.courseservice.dto.TestAttemptTeacherRowDto> getTestResults(
             @PathVariable Long courseId,
             @AuthenticationPrincipal Jwt jwt) {
         return courseService.getTestAttemptsByCourse(courseId, jwt);

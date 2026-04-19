@@ -8,7 +8,9 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Entity
 @Table(name = "courses")
@@ -67,6 +69,15 @@ public class Course {
     @CollectionTable(name = "course_students", joinColumns = @JoinColumn(name = "course_id"))
     @Column(name = "student_id")
     private List<String> enrolledStudents = new ArrayList<>();
+
+    /**
+     * Optional display label (email or username) keyed by user id — filled on course create / enroll.
+     */
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "course_participant_labels", joinColumns = @JoinColumn(name = "course_id"))
+    @MapKeyColumn(name = "user_id", length = 255)
+    @Column(name = "display_label", length = 512)
+    private Map<String, String> participantDisplayLabels = new HashMap<>();
 
     @ElementCollection
     @CollectionTable(name = "course_allowed_emails", joinColumns = @JoinColumn(name = "course_id"))

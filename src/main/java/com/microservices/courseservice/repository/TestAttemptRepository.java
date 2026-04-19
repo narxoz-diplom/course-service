@@ -15,6 +15,9 @@ public interface TestAttemptRepository extends JpaRepository<TestAttempt, Long> 
     List<TestAttempt> findByStudentIdOrderByCompletedAtDesc(String studentId);
     List<TestAttempt> findByTest_Course_IdOrderByCompletedAtDesc(Long courseId);
 
+    @Query("SELECT ta FROM TestAttempt ta JOIN FETCH ta.test t WHERE t.course.id = :courseId ORDER BY ta.completedAt DESC")
+    List<TestAttempt> findByCourseIdWithTest(@Param("courseId") Long courseId);
+
     /** Remove attempts for all tests of the course (FK test_attempts → tests). */
     @Modifying(clearAutomatically = true)
     @Query("DELETE FROM TestAttempt ta WHERE ta.test.course.id = :courseId")

@@ -24,6 +24,12 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
+
+  flyway:
+    enabled: true
+    # одна БД на все сервисы — своя таблица версий, чтобы не конфликтовать с file-service
+    table: course_service_flyway_history
+    baseline-on-migrate: true
   
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
