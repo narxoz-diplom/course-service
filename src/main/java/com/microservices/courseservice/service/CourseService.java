@@ -4,6 +4,7 @@ import com.microservices.courseservice.client.AuthServiceClient;
 import com.microservices.courseservice.client.FileServiceClient;
 import com.microservices.courseservice.client.RagClient;
 import com.microservices.courseservice.dto.AdminPlatformStatsDto;
+import com.microservices.courseservice.dto.CourseViewerResponse;
 import com.microservices.courseservice.dto.CourseOutlineResponse;
 import com.microservices.courseservice.dto.GenerateFromOutlineRequest;
 import com.microservices.courseservice.dto.GenerateLessonsRequest;
@@ -87,47 +88,112 @@ public class CourseService {
         return created;
     }
 
-    public Course getCourseById(Long id) {
-        return getCourseById(id, null);
-    }
-
     /**
      * Uses an explicit read-only {@link TransactionTemplate} so lazy collections initialize while the session is open.
      * Works for {@code @Async} and other internal callers (unlike {@code @Transactional} on a method called via {@code this}).
+     * Does not increment view counters (use {@link #getCourseForViewer} for end-user course pages).
      */
-    public Course getCourseById(Long id, Jwt jwt) {
+    public Course getCourseById(Long id) {
         return readOnlyCourseTx.execute(
                 status -> {
                     Course course = courseRepository
                             .findById(id)
                             .orElseThrow(() -> new RuntimeException("Course not found with id: " + id));
-                    if (jwt != null && !RoleUtil.isAdmin(jwt) && !RoleUtil.isTeacher(jwt)) {
-                        validateStudentCourseAccess(course, jwt);
-                    }
                     if (course.getLessons() != null) {
                         course.getLessons().size();
                     }
                     if (course.getParticipantDisplayLabels() != null) {
                         course.getParticipantDisplayLabels().size();
                     }
-                    incrementCourseViews(id);
                     return course;
                 });
     }
 
-    private void validateStudentCourseAccess(Course course, Jwt jwt) {
+    /**
+     * Full course for participants / staff, or a safe preview for published courses when the user is not enrolled.
+     */
+    public CourseViewerResponse getCourseForViewer(Long id, Jwt jwt) {
+        return readOnlyCourseTx.execute(
+                status -> {
+                    Course course = courseRepository
+                            .findById(id)
+                            .orElseThrow(() -> new RuntimeException("Course not found with id: " + id));
+                    if (jwt == null) {
+                        throw new AccessDeniedException("Authentication required");
+                    }
+                    boolean privileged = RoleUtil.isAdmin(jwt) || RoleUtil.isTeacher(jwt);
+                    boolean participant = hasParticipationAccess(course, jwt);
+                    if (privileged || participant) {
+                        touchLazyCollections(course);
+                        incrementCourseViews(id);
+                        return new CourseViewerResponse(false, course);
+                    }
+                    if (course.getStatus() == Course.CourseStatus.PUBLISHED) {
+                        incrementCourseViews(id);
+                        return new CourseViewerResponse(true, toPreviewCourse(course));
+                    }
+                    throw new AccessDeniedException("You do not have access to this course");
+                });
+    }
+
+    private static void touchLazyCollections(Course course) {
+        if (course.getLessons() != null) {
+            course.getLessons().size();
+        }
+        if (course.getParticipantDisplayLabels() != null) {
+            course.getParticipantDisplayLabels().size();
+        }
+    }
+
+    private Course toPreviewCourse(Course source) {
+        Course c = new Course();
+        c.setId(source.getId());
+        c.setTitle(source.getTitle());
+        c.setDescription(source.getDescription());
+        c.setTitleKz(source.getTitleKz());
+        c.setTitleEn(source.getTitleEn());
+        c.setDescriptionKz(source.getDescriptionKz());
+        c.setDescriptionEn(source.getDescriptionEn());
+        c.setImageUrl(source.getImageUrl());
+        c.setInstructorId(source.getInstructorId());
+        c.setCreatedAt(source.getCreatedAt());
+        c.setUpdatedAt(source.getUpdatedAt());
+        c.setStatus(source.getStatus());
+        c.setLessons(new ArrayList<>());
+        c.setTests(new ArrayList<>());
+        c.setEnrolledStudents(new ArrayList<>());
+        c.setAllowedEmails(new ArrayList<>());
+        c.setParticipantDisplayLabels(new HashMap<>());
+        return c;
+    }
+
+    private boolean hasParticipationAccess(Course course, Jwt jwt) {
         String userId = jwt.getSubject();
         if (course.getEnrolledStudents() != null && course.getEnrolledStudents().contains(userId)) {
-            return;
+            return true;
         }
         String email = getUserEmail(userId, jwt);
         if (email != null && course.getAllowedEmails() != null && course.getAllowedEmails().contains(email)) {
-            return;
+            return true;
         }
-        if (course.getInstructorId().equals(userId)) {
+        return course.getInstructorId() != null && course.getInstructorId().equals(userId);
+    }
+
+    private void validateStudentCourseAccess(Course course, Jwt jwt) {
+        if (hasParticipationAccess(course, jwt)) {
             return;
         }
         throw new AccessDeniedException("You do not have access to this course");
+    }
+
+    private void assertCanViewCourseMaterials(Course course, Jwt jwt) {
+        if (jwt == null) {
+            throw new AccessDeniedException("Authentication required");
+        }
+        if (RoleUtil.isAdmin(jwt) || RoleUtil.isTeacher(jwt)) {
+            return;
+        }
+        validateStudentCourseAccess(course, jwt);
     }
 
     /** Instructor, enrolled student (or allowed-email), or admin — not arbitrary teacher. */
@@ -584,12 +650,16 @@ public class CourseService {
         }
     }
 
-    public List<Lesson> getLessonsByCourse(Long courseId) {
+    public List<Lesson> getLessonsByCourse(Long courseId, Jwt jwt) {
+        Course course = getCourseById(courseId);
+        assertCanViewCourseMaterials(course, jwt);
         return lessonService.getLessonsByCourse(courseId);
     }
 
-    public Lesson getLessonById(Long lessonId) {
-        return lessonService.getLessonById(lessonId);
+    public Lesson getLessonById(Long lessonId, Jwt jwt) {
+        Lesson lesson = lessonService.getLessonById(lessonId);
+        assertCanViewCourseMaterials(lesson.getCourse(), jwt);
+        return lesson;
     }
 
     @Transactional
@@ -616,7 +686,9 @@ public class CourseService {
         return videoRepository.save(video);
     }
 
-    public List<Video> getVideosByLesson(Long lessonId) {
+    public List<Video> getVideosByLesson(Long lessonId, Jwt jwt) {
+        Lesson lesson = lessonService.getLessonById(lessonId);
+        assertCanViewCourseMaterials(lesson.getCourse(), jwt);
         return videoRepository.findByLessonIdOrderByOrderNumber(lessonId);
     }
 
@@ -648,18 +720,27 @@ public class CourseService {
         }
     }
 
-    public List<Test> getTestsByCourse(Long courseId) {
+    public List<Test> getTestsByCourse(Long courseId, Jwt jwt) {
+        Course course = getCourseById(courseId);
+        assertCanViewCourseMaterials(course, jwt);
         return testRepository.findByCourseId(courseId);
     }
 
-    public Test getTestById(Long testId) {
+    public Test getTestById(Long testId, Jwt jwt) {
+        Test test = testRepository.findById(testId)
+                .orElseThrow(() -> new RuntimeException("Test not found: " + testId));
+        assertCanViewCourseMaterials(test.getCourse(), jwt);
+        return test;
+    }
+
+    private Test requireTestEntity(Long testId) {
         return testRepository.findById(testId)
                 .orElseThrow(() -> new RuntimeException("Test not found: " + testId));
     }
 
     @Transactional
     public TestAttempt submitTestAttempt(Long testId, String studentId, java.util.Map<String, String> answers, Boolean suspiciousFlag, Jwt jwt) {
-        Test test = getTestById(testId);
+        Test test = requireTestEntity(testId);
         Course course = test.getCourse();
         validateStudentCourseAccess(course, jwt);
         if (!course.getEnrolledStudents().contains(studentId)) {

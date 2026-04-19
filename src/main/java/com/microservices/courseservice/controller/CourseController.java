@@ -1,6 +1,7 @@
 package com.microservices.courseservice.controller;
 
 import com.microservices.courseservice.dto.AdminPlatformStatsDto;
+import com.microservices.courseservice.dto.CourseViewerResponse;
 import com.microservices.courseservice.dto.StatusUpdateRequest;
 import com.microservices.courseservice.dto.VideoMetadataRequest;
 import com.microservices.courseservice.model.Course;
@@ -61,8 +62,8 @@ public class CourseController {
     }
 
     @GetMapping("/{id}")
-    public Course getCourse(@PathVariable Long id, @AuthenticationPrincipal Jwt jwt) {
-        return courseService.getCourseById(id, jwt);
+    public CourseViewerResponse getCourse(@PathVariable Long id, @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getCourseForViewer(id, jwt);
     }
 
     @PutMapping("/{id}")
@@ -145,13 +146,17 @@ public class CourseController {
 
     @GetMapping("/{courseId}/lessons")
     @ResponseStatus(HttpStatus.OK)
-    public List<Lesson> getLessons(@PathVariable Long courseId) {
-        return courseService.getLessonsByCourse(courseId);
+    public List<Lesson> getLessons(
+            @PathVariable Long courseId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getLessonsByCourse(courseId, jwt);
     }
 
     @GetMapping("/lessons/{lessonId}")
-    public Lesson getLesson(@PathVariable Long lessonId) {
-        return courseService.getLessonById(lessonId);
+    public Lesson getLesson(
+            @PathVariable Long lessonId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getLessonById(lessonId, jwt);
     }
 
     @PutMapping("/lessons/{lessonId}")
@@ -181,8 +186,10 @@ public class CourseController {
     }
 
     @GetMapping("/lessons/{lessonId}/videos")
-    public List<Video> getVideos(@PathVariable Long lessonId) {
-        return courseService.getVideosByLesson(lessonId);
+    public List<Video> getVideos(
+            @PathVariable Long lessonId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getVideosByLesson(lessonId, jwt);
     }
 
     @DeleteMapping("/lessons/{lessonId}/videos/{videoId}")
@@ -236,13 +243,16 @@ public class CourseController {
 
     @GetMapping("/{courseId}/tests")
     public java.util.List<com.microservices.courseservice.model.Test> getTests(
-            @PathVariable Long courseId) {
-        return courseService.getTestsByCourse(courseId);
+            @PathVariable Long courseId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getTestsByCourse(courseId, jwt);
     }
 
     @GetMapping("/tests/{testId}")
-    public com.microservices.courseservice.model.Test getTest(@PathVariable Long testId) {
-        return courseService.getTestById(testId);
+    public com.microservices.courseservice.model.Test getTest(
+            @PathVariable Long testId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getTestById(testId, jwt);
     }
 
     @PostMapping("/tests/{testId}/submit")
