@@ -2,6 +2,7 @@ package com.microservices.courseservice.controller;
 
 import com.microservices.courseservice.dto.AdminPlatformStatsDto;
 import com.microservices.courseservice.dto.CourseViewerResponse;
+import com.microservices.courseservice.dto.SearchResultDto;
 import com.microservices.courseservice.dto.StatusUpdateRequest;
 import com.microservices.courseservice.dto.VideoMetadataRequest;
 import com.microservices.courseservice.model.Course;
@@ -52,6 +53,14 @@ public class CourseController {
     @GetMapping("/published")
     public List<Course> getPublishedCourses() {
         return courseService.getAllPublishedCourses();
+    }
+
+    @GetMapping("/search")
+    public List<SearchResultDto> searchMaterials(
+            @RequestParam("q") String query,
+            @RequestParam(value = "limit", required = false) Integer limit,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.searchMaterials(query, limit, jwt);
     }
 
     @GetMapping("/{courseId}/participants")

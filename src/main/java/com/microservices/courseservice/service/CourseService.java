@@ -13,6 +13,7 @@ import com.microservices.courseservice.dto.LessonGenerationParamsDto;
 import com.microservices.courseservice.dto.LessonOutlineItemDto;
 import com.microservices.courseservice.dto.RagLessonDto;
 import com.microservices.courseservice.dto.RagQuizQuestionDto;
+import com.microservices.courseservice.dto.SearchResultDto;
 import com.microservices.courseservice.dto.VideoMetadataRequest;
 import com.microservices.courseservice.event.CourseVectorCleanupEvent;
 import com.microservices.courseservice.exception.QualityGateException;
@@ -36,8 +37,10 @@ import org.springframework.http.HttpStatus;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.List;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -46,6 +49,9 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class CourseService {
+    private static final int SEARCH_MIN_QUERY_LENGTH = 2;
+    private static final int SEARCH_DEFAULT_LIMIT = 12;
+    private static final int SEARCH_MAX_LIMIT = 30;
 
     private final CourseRepository courseRepository;
     private final LessonRepository lessonRepository;
@@ -68,6 +74,9 @@ public class CourseService {
     private final PlatformTransactionManager transactionManager;
 
     private TransactionTemplate readOnlyCourseTx;
+
+    private record SearchHit(SearchResultDto dto, int score, int typePriority, String title) {
+    }
 
     @PostConstruct
     void initReadOnlyCourseTemplate() {
@@ -255,6 +264,212 @@ public class CourseService {
 
     public List<Course> getEnrolledCourses(String studentId) {
         return courseRepository.findByEnrolledStudentsContaining(studentId);
+    }
+
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public List<SearchResultDto> searchMaterials(String rawQuery, Integer requestedLimit, Jwt jwt) {
+        if (jwt == null) {
+            throw new AccessDeniedException("Authentication required");
+        }
+
+        String query = normalizeSearchQuery(rawQuery);
+        if (query.length() < SEARCH_MIN_QUERY_LENGTH) {
+            return List.of();
+        }
+
+        int limit = normalizeSearchLimit(requestedLimit);
+        List<SearchHit> hits = new ArrayList<>();
+
+        for (Course course : getCoursesVisibleInCatalog(jwt)) {
+            int score = scoreCourse(query, course);
+            if (score > 0) {
+                hits.add(new SearchHit(toCourseSearchResult(course), score, 0, normalizeSearchQuery(course.getTitle())));
+            }
+        }
+
+        List<Course> materialCourses = getCoursesVisibleForMaterials(jwt);
+        if (!materialCourses.isEmpty()) {
+            Map<Long, Course> coursesById = materialCourses.stream()
+                    .collect(Collectors.toMap(Course::getId, course -> course, (left, right) -> left));
+            List<Long> courseIds = new ArrayList<>(coursesById.keySet());
+
+            for (Lesson lesson : lessonRepository.findByCourseIdInOrderByCourseIdAscOrderNumberAsc(courseIds)) {
+                Course course = coursesById.get(lesson.getCourse().getId());
+                if (course == null) {
+                    continue;
+                }
+                int score = scoreLesson(query, lesson, course);
+                if (score > 0) {
+                    hits.add(new SearchHit(toLessonSearchResult(course, lesson), score, 1, normalizeSearchQuery(lesson.getTitle())));
+                }
+            }
+
+            for (Test test : testRepository.findByCourseIdInOrderByCourseIdAscIdAsc(courseIds)) {
+                Course course = coursesById.get(test.getCourse().getId());
+                if (course == null) {
+                    continue;
+                }
+                int score = scoreTest(query, test, course);
+                if (score > 0) {
+                    hits.add(new SearchHit(toTestSearchResult(course, test), score, 2, normalizeSearchQuery(test.getTitle())));
+                }
+            }
+        }
+
+        return hits.stream()
+                .sorted(Comparator
+                        .comparingInt(SearchHit::score).reversed()
+                        .thenComparingInt(SearchHit::typePriority)
+                        .thenComparing(SearchHit::title))
+                .limit(limit)
+                .map(SearchHit::dto)
+                .toList();
+    }
+
+    private List<Course> getCoursesVisibleInCatalog(Jwt jwt) {
+        if (RoleUtil.isAdmin(jwt) || RoleUtil.isTeacher(jwt)) {
+            return getAllCourses(jwt);
+        }
+        return getAllPublishedCourses();
+    }
+
+    private List<Course> getCoursesVisibleForMaterials(Jwt jwt) {
+        if (RoleUtil.isAdmin(jwt) || RoleUtil.isTeacher(jwt)) {
+            return getAllCourses(jwt);
+        }
+        return getAccessibleCoursesForStudent(jwt);
+    }
+
+    private int scoreCourse(String query, Course course) {
+        return scoreByFields(
+                query,
+                400,
+                nullableFields(course.getTitle(), course.getTitleKz(), course.getTitleEn()),
+                nullableFields(course.getDescription(), course.getDescriptionKz(), course.getDescriptionEn()));
+    }
+
+    private int scoreLesson(String query, Lesson lesson, Course course) {
+        int score = scoreByFields(
+                query,
+                320,
+                nullableFields(lesson.getTitle(), lesson.getTitleKz(), lesson.getTitleEn()),
+                nullableFields(lesson.getDescription(), lesson.getDescriptionKz(), lesson.getDescriptionEn()));
+        if (score == 0) {
+            return 0;
+        }
+        return score + scoreByAuxiliaryField(query, course.getTitle(), course.getTitleKz(), course.getTitleEn());
+    }
+
+    private int scoreTest(String query, Test test, Course course) {
+        int score = scoreByFields(
+                query,
+                300,
+                nullableFields(test.getTitle(), test.getTitleKz(), test.getTitleEn()),
+                List.of());
+        if (score == 0) {
+            return 0;
+        }
+        return score + scoreByAuxiliaryField(query, course.getTitle(), course.getTitleKz(), course.getTitleEn());
+    }
+
+    private int scoreByFields(String query, int titleBaseScore, List<String> titleFields, List<String> descriptionFields) {
+        int titleScore = bestTextScore(query, titleFields, titleBaseScore);
+        int descriptionScore = bestTextScore(query, descriptionFields, 120);
+        return Math.max(titleScore, descriptionScore);
+    }
+
+    private int scoreByAuxiliaryField(String query, String... values) {
+        return bestTextScore(query, nullableFields(values), 40);
+    }
+
+    private int bestTextScore(String query, List<String> fields, int baseScore) {
+        int best = 0;
+        for (String field : new LinkedHashSet<>(fields)) {
+            String normalized = normalizeSearchQuery(field);
+            if (normalized.isBlank()) {
+                continue;
+            }
+            if (normalized.equals(query)) {
+                best = Math.max(best, baseScore + 30);
+                continue;
+            }
+            if (normalized.startsWith(query)) {
+                best = Math.max(best, baseScore + 15);
+                continue;
+            }
+            if (normalized.contains(query)) {
+                best = Math.max(best, baseScore);
+            }
+        }
+        return best;
+    }
+
+    private SearchResultDto toCourseSearchResult(Course course) {
+        return SearchResultDto.builder()
+                .type("course")
+                .courseId(course.getId())
+                .title(course.getTitle())
+                .titleKz(course.getTitleKz())
+                .titleEn(course.getTitleEn())
+                .description(course.getDescription())
+                .descriptionKz(course.getDescriptionKz())
+                .descriptionEn(course.getDescriptionEn())
+                .courseTitle(course.getTitle())
+                .courseTitleKz(course.getTitleKz())
+                .courseTitleEn(course.getTitleEn())
+                .build();
+    }
+
+    private SearchResultDto toLessonSearchResult(Course course, Lesson lesson) {
+        return SearchResultDto.builder()
+                .type("lesson")
+                .courseId(course.getId())
+                .lessonId(lesson.getId())
+                .title(lesson.getTitle())
+                .titleKz(lesson.getTitleKz())
+                .titleEn(lesson.getTitleEn())
+                .description(lesson.getDescription())
+                .descriptionKz(lesson.getDescriptionKz())
+                .descriptionEn(lesson.getDescriptionEn())
+                .courseTitle(course.getTitle())
+                .courseTitleKz(course.getTitleKz())
+                .courseTitleEn(course.getTitleEn())
+                .build();
+    }
+
+    private SearchResultDto toTestSearchResult(Course course, Test test) {
+        return SearchResultDto.builder()
+                .type("test")
+                .courseId(course.getId())
+                .testId(test.getId())
+                .title(test.getTitle())
+                .titleKz(test.getTitleKz())
+                .titleEn(test.getTitleEn())
+                .courseTitle(course.getTitle())
+                .courseTitleKz(course.getTitleKz())
+                .courseTitleEn(course.getTitleEn())
+                .build();
+    }
+
+    private int normalizeSearchLimit(Integer requestedLimit) {
+        if (requestedLimit == null || requestedLimit <= 0) {
+            return SEARCH_DEFAULT_LIMIT;
+        }
+        return Math.min(requestedLimit, SEARCH_MAX_LIMIT);
+    }
+
+    private String normalizeSearchQuery(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+                .trim()
+                .replaceAll("\\s+", " ")
+                .toLowerCase(Locale.ROOT);
+    }
+
+    private List<String> nullableFields(String... values) {
+        return java.util.Arrays.asList(values);
     }
 
     @Transactional

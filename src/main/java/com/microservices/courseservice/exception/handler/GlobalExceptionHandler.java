@@ -1,6 +1,7 @@
 package com.microservices.courseservice.exception.handler;
 
 import com.microservices.courseservice.client.RagClientException;
+import com.microservices.courseservice.exception.QualityGateException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +24,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleRagClientException(RagClientException e) {
         log.warn("RAG client error: {}", e.getMessage());
         // Ошибки контракта/данных от RAG считаем ошибкой запроса со стороны клиента
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
+    }
+
+    @ExceptionHandler(QualityGateException.class)
+    public ResponseEntity<String> handleQualityGateException(QualityGateException e) {
+        log.warn("Quality gate: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
     }
 

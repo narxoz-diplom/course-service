@@ -10,6 +10,7 @@ import java.util.List;
 @Repository
 public interface TestRepository extends JpaRepository<Test, Long> {
     List<Test> findByCourseId(Long courseId);
+    List<Test> findByCourseIdInOrderByCourseIdAscIdAsc(List<Long> courseIds);
 
     List<Test> findByCourseIdInAndDueAtAfterOrderByDueAtAsc(List<Long> courseIds, LocalDateTime dueAt);
 }
