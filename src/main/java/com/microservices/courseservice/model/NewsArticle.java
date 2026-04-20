@@ -24,8 +24,7 @@ public class NewsArticle {
     @Column(name = "short_description", nullable = false, length = 2000)
     private String shortDescription;
 
-    @Lob
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
     @Column(name = "published_at", nullable = false)
