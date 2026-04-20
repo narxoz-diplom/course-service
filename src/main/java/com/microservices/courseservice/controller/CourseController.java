@@ -9,6 +9,8 @@ import com.microservices.courseservice.model.Lesson;
 import com.microservices.courseservice.model.Video;
 import com.microservices.courseservice.service.CacheService;
 import com.microservices.courseservice.service.CourseService;
+import com.microservices.courseservice.service.backfill.BackfillJobDto;
+import com.microservices.courseservice.service.backfill.BackfillLocalizationJobService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -28,6 +30,7 @@ public class CourseController {
     private final CourseService courseService;
     private final CacheService cacheService;
     private final com.microservices.courseservice.service.LessonGenerationJobService lessonGenerationJobService;
+    private final BackfillLocalizationJobService backfillLocalizationJobService;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -226,10 +229,68 @@ public class CourseController {
     }
 
     @PostMapping("/{courseId}/backfill-localizations")
-    public ResponseEntity<java.util.Map<String, Object>> backfillLocalizations(
+    public ResponseEntity<BackfillJobDto> backfillLocalizations(
+            @PathVariable Long courseId,
+            @RequestParam(name = "lang", required = false) String lang,
+            @AuthenticationPrincipal Jwt jwt) {
+        courseService.requireBackfillLocalizationsPermission(courseId, jwt);
+        java.util.Set<String> langs = parseLanguages(lang);
+        BackfillJobDto job = backfillLocalizationJobService.start(courseId, langs);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
+    }
+
+    @PostMapping("/{courseId}/backfill-localizations/kz")
+    public ResponseEntity<BackfillJobDto> backfillLocalizationsKz(
             @PathVariable Long courseId,
             @AuthenticationPrincipal Jwt jwt) {
-        return ResponseEntity.ok(courseService.backfillLocalizations(courseId, jwt));
+        courseService.requireBackfillLocalizationsPermission(courseId, jwt);
+        BackfillJobDto job = backfillLocalizationJobService.start(courseId, java.util.Set.of("kz"));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
+    }
+
+    @PostMapping("/{courseId}/backfill-localizations/en")
+    public ResponseEntity<BackfillJobDto> backfillLocalizationsEn(
+            @PathVariable Long courseId,
+            @AuthenticationPrincipal Jwt jwt) {
+        courseService.requireBackfillLocalizationsPermission(courseId, jwt);
+        BackfillJobDto job = backfillLocalizationJobService.start(courseId, java.util.Set.of("en"));
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
+    }
+
+    @GetMapping("/{courseId}/backfill-localizations/jobs/{jobId}")
+    public ResponseEntity<BackfillJobDto> getBackfillLocalizationsJob(
+            @PathVariable Long courseId,
+            @PathVariable String jobId,
+            @AuthenticationPrincipal Jwt jwt) {
+        courseService.requireBackfillLocalizationsPermission(courseId, jwt);
+        BackfillJobDto job = backfillLocalizationJobService.get(jobId);
+        if (job == null || job.getCourseId() == null || !job.getCourseId().equals(courseId)) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(job);
+    }
+
+    @GetMapping("/{courseId}/backfill-localizations/summary")
+    public ResponseEntity<java.util.Map<String, Object>> getBackfillLocalizationsSummary(
+            @PathVariable Long courseId,
+            @RequestParam(name = "lang", required = false) String lang,
+            @AuthenticationPrincipal Jwt jwt) {
+        courseService.requireBackfillLocalizationsPermission(courseId, jwt);
+        java.util.Set<String> langs = parseLanguages(lang);
+        return ResponseEntity.ok(backfillLocalizationJobService.summary(courseId, langs));
+    }
+
+    private static java.util.Set<String> parseLanguages(String raw) {
+        if (raw == null || raw.isBlank()) return java.util.Set.of("kz", "en");
+        java.util.Set<String> set = new java.util.HashSet<>();
+        for (String p : raw.split("[,;\\s]+")) {
+            String v = p == null ? "" : p.trim().toLowerCase();
+            if (v.isBlank()) continue;
+            if (v.equals("kz") || v.equals("en")) {
+                set.add(v);
+            }
+        }
+        return set.isEmpty() ? java.util.Set.of("kz", "en") : java.util.Set.copyOf(set);
     }
 
     @PostMapping("/{courseId}/tests/generate")

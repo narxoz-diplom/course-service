@@ -1104,13 +1104,22 @@ public class CourseService {
         );
     }
 
-    private boolean backfillCourse(Course course) {
+    public void requireBackfillLocalizationsPermission(Long courseId, Jwt jwt) {
+        Course course = getCourseById(courseId);
+        validateCourseUpdatePermission(course, jwt);
+    }
+
+    public boolean backfillCourse(Course course) {
+        return backfillCourse(course, true, true);
+    }
+
+    public boolean backfillCourse(Course course, boolean doKz, boolean doEn) {
         boolean needsKz = isBlank(course.getTitleKz()) || isBlank(course.getDescriptionKz());
         boolean needsEn = isBlank(course.getTitleEn()) || isBlank(course.getDescriptionEn());
         if (!needsKz && !needsEn) return false;
         if (isBlank(course.getTitle()) && isBlank(course.getDescription())) return false;
 
-        if (needsKz) {
+        if (doKz && needsKz) {
             Map<String, Object> tr = ragClient.translateJson(Map.of(
                     "title", nvl(course.getTitle()),
                     "description", nvl(course.getDescription())
@@ -1118,7 +1127,7 @@ public class CourseService {
             if (isBlank(course.getTitleKz())) course.setTitleKz(str(tr.get("title")));
             if (isBlank(course.getDescriptionKz())) course.setDescriptionKz(str(tr.get("description")));
         }
-        if (needsEn) {
+        if (doEn && needsEn) {
             Map<String, Object> tr = ragClient.translateJson(Map.of(
                     "title", nvl(course.getTitle()),
                     "description", nvl(course.getDescription())
@@ -1129,7 +1138,11 @@ public class CourseService {
         return true;
     }
 
-    private boolean backfillLesson(Lesson lesson) {
+    public boolean backfillLesson(Lesson lesson) {
+        return backfillLesson(lesson, true, true);
+    }
+
+    public boolean backfillLesson(Lesson lesson, boolean doKz, boolean doEn) {
         boolean needsKz = isBlank(lesson.getTitleKz()) || isBlank(lesson.getDescriptionKz()) || isBlank(lesson.getContentKz());
         boolean needsEn = isBlank(lesson.getTitleEn()) || isBlank(lesson.getDescriptionEn()) || isBlank(lesson.getContentEn());
         if (!needsKz && !needsEn) return false;
@@ -1140,13 +1153,13 @@ public class CourseService {
         source.put("description", nvl(lesson.getDescription()));
         source.put("content", nvl(lesson.getContent()));
 
-        if (needsKz) {
+        if (doKz && needsKz) {
             Map<String, Object> tr = ragClient.translateJson(source, "kz");
             if (isBlank(lesson.getTitleKz())) lesson.setTitleKz(str(tr.get("title")));
             if (isBlank(lesson.getDescriptionKz())) lesson.setDescriptionKz(str(tr.get("description")));
             if (isBlank(lesson.getContentKz())) lesson.setContentKz(str(tr.get("content")));
         }
-        if (needsEn) {
+        if (doEn && needsEn) {
             Map<String, Object> tr = ragClient.translateJson(source, "en");
             if (isBlank(lesson.getTitleEn())) lesson.setTitleEn(str(tr.get("title")));
             if (isBlank(lesson.getDescriptionEn())) lesson.setDescriptionEn(str(tr.get("description")));
@@ -1155,24 +1168,32 @@ public class CourseService {
         return true;
     }
 
-    private boolean backfillTest(Test test) {
+    public boolean backfillTest(Test test) {
+        return backfillTest(test, true, true);
+    }
+
+    public boolean backfillTest(Test test, boolean doKz, boolean doEn) {
         boolean needsKz = isBlank(test.getTitleKz());
         boolean needsEn = isBlank(test.getTitleEn());
         if (!needsKz && !needsEn) return false;
         if (isBlank(test.getTitle())) return false;
 
-        if (needsKz) {
+        if (doKz && needsKz) {
             Map<String, Object> tr = ragClient.translateJson(Map.of("title", nvl(test.getTitle())), "kz");
             if (isBlank(test.getTitleKz())) test.setTitleKz(str(tr.get("title")));
         }
-        if (needsEn) {
+        if (doEn && needsEn) {
             Map<String, Object> tr = ragClient.translateJson(Map.of("title", nvl(test.getTitle())), "en");
             if (isBlank(test.getTitleEn())) test.setTitleEn(str(tr.get("title")));
         }
         return true;
     }
 
-    private boolean backfillQuestion(Question question) {
+    public boolean backfillQuestion(Question question) {
+        return backfillQuestion(question, true, true);
+    }
+
+    public boolean backfillQuestion(Question question, boolean doKz, boolean doEn) {
         boolean needsKz = isBlank(question.getTextKz()) || isBlank(question.getOptionsKz())
                 || isBlank(question.getExplanationKz()) || isBlank(question.getHintKz());
         boolean needsEn = isBlank(question.getTextEn()) || isBlank(question.getOptionsEn())
@@ -1185,14 +1206,14 @@ public class CourseService {
         source.put("explanation", nvl(question.getExplanation()));
         source.put("hint", nvl(question.getHint()));
 
-        if (needsKz) {
+        if (doKz && needsKz) {
             Map<String, Object> tr = ragClient.translateJson(source, "kz");
             if (isBlank(question.getTextKz())) question.setTextKz(str(tr.get("text")));
             if (isBlank(question.getOptionsKz())) question.setOptionsKz(toJson(tr.get("options")));
             if (isBlank(question.getExplanationKz())) question.setExplanationKz(str(tr.get("explanation")));
             if (isBlank(question.getHintKz())) question.setHintKz(str(tr.get("hint")));
         }
-        if (needsEn) {
+        if (doEn && needsEn) {
             Map<String, Object> tr = ragClient.translateJson(source, "en");
             if (isBlank(question.getTextEn())) question.setTextEn(str(tr.get("text")));
             if (isBlank(question.getOptionsEn())) question.setOptionsEn(toJson(tr.get("options")));
