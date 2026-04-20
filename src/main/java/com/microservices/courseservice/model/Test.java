@@ -39,6 +39,20 @@ public class Test {
     @Column(nullable = false)
     private Boolean isVisible = true;
 
+    /**
+     * Maximum number of attempts per student for this test.
+     * Null (or <=0) means unlimited attempts.
+     */
+    @Column
+    private Integer maxAttempts;
+
+    /**
+     * Deadline for this test (local date-time as stored by the platform).
+     * Null means no deadline.
+     */
+    @Column
+    private LocalDateTime dueAt;
+
     @OneToMany(mappedBy = "test", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonManagedReference("test-questions")
     private List<Question> questions = new ArrayList<>();

@@ -15,6 +15,11 @@ public interface TestAttemptRepository extends JpaRepository<TestAttempt, Long> 
     List<TestAttempt> findByStudentIdOrderByCompletedAtDesc(String studentId);
     List<TestAttempt> findByTest_Course_IdOrderByCompletedAtDesc(Long courseId);
 
+    long countByTestIdAndStudentId(Long testId, String studentId);
+
+    @Query("SELECT ta FROM TestAttempt ta JOIN FETCH ta.test t WHERE ta.studentId = :studentId ORDER BY ta.completedAt DESC")
+    List<TestAttempt> findByStudentIdWithTest(@Param("studentId") String studentId);
+
     @Query("SELECT ta FROM TestAttempt ta JOIN FETCH ta.test t WHERE t.course.id = :courseId ORDER BY ta.completedAt DESC")
     List<TestAttempt> findByCourseIdWithTest(@Param("courseId") Long courseId);
 

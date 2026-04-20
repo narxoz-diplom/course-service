@@ -4,9 +4,12 @@ import com.microservices.courseservice.model.Test;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Repository
 public interface TestRepository extends JpaRepository<Test, Long> {
     List<Test> findByCourseId(Long courseId);
+
+    List<Test> findByCourseIdInAndDueAtAfterOrderByDueAtAsc(List<Long> courseIds, LocalDateTime dueAt);
 }

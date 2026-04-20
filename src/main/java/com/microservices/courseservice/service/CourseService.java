@@ -28,9 +28,11 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.http.HttpStatus;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -746,6 +748,13 @@ public class CourseService {
         if (!course.getEnrolledStudents().contains(studentId)) {
             throw new AccessDeniedException("You must be enrolled to take this test");
         }
+        Integer limit = test.getMaxAttempts();
+        if (limit != null && limit > 0) {
+            long used = testAttemptRepository.countByTestIdAndStudentId(testId, studentId);
+            if (used >= limit) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Attempt limit reached for this test");
+            }
+        }
         List<Question> questions = questionRepository.findByTestIdOrderByOrderNumber(testId);
         int maxScore = questions.size();
         int score = 0;
@@ -795,6 +804,96 @@ public class CourseService {
 
     public List<TestAttempt> getMyTestAttempts(String studentId) {
         return testAttemptRepository.findByStudentIdOrderByCompletedAtDesc(studentId);
+    }
+
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public java.util.List<com.microservices.courseservice.dto.MyTestAttemptDto> getMyTestAttemptDtos(String studentId) {
+        return testAttemptRepository.findByStudentIdWithTest(studentId).stream()
+                .map(ta -> com.microservices.courseservice.dto.MyTestAttemptDto.builder()
+                        .attemptId(ta.getId())
+                        .testId(ta.getTest() != null ? ta.getTest().getId() : null)
+                        .score(ta.getScore())
+                        .maxScore(ta.getMaxScore())
+                        .completedAt(ta.getCompletedAt() != null ? ta.getCompletedAt().toString() : null)
+                        .suspiciousFlag(ta.getSuspiciousFlag())
+                        .build())
+                .toList();
+    }
+
+    @Transactional
+    public Test updateTestSettings(Long testId, Integer maxAttempts, Jwt jwt) {
+        Test test = requireTestEntity(testId);
+        Course course = test.getCourse();
+        validateCourseUpdatePermission(course, jwt);
+        Integer normalized = maxAttempts;
+        if (normalized != null && normalized <= 0) {
+            normalized = null;
+        }
+        test.setMaxAttempts(normalized);
+        return testRepository.save(test);
+    }
+
+    @Transactional
+    public Test updateTestSettings(Long testId, Integer maxAttempts, String dueAtRaw, Jwt jwt) {
+        Test test = requireTestEntity(testId);
+        Course course = test.getCourse();
+        validateCourseUpdatePermission(course, jwt);
+
+        Integer normalizedAttempts = maxAttempts;
+        if (normalizedAttempts != null && normalizedAttempts <= 0) {
+            normalizedAttempts = null;
+        }
+        test.setMaxAttempts(normalizedAttempts);
+
+        java.time.LocalDateTime dueAt = null;
+        if (dueAtRaw != null && !dueAtRaw.isBlank()) {
+            try {
+                // Expect: "YYYY-MM-DDTHH:mm" (from datetime-local). Also accept full ISO local datetime.
+                dueAt = java.time.LocalDateTime.parse(dueAtRaw.trim());
+            } catch (Exception e) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid dueAt формат");
+            }
+        }
+        test.setDueAt(dueAt);
+
+        return testRepository.save(test);
+    }
+
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public java.util.List<com.microservices.courseservice.dto.UpcomingTestDeadlineDto> getMyUpcomingTestDeadlines(Jwt jwt) {
+        String studentId = jwt.getSubject();
+        List<Course> enrolled = courseRepository.findByEnrolledStudentsContaining(studentId);
+        if (enrolled == null || enrolled.isEmpty()) {
+            return List.of();
+        }
+        List<Long> courseIds = enrolled.stream().map(Course::getId).filter(java.util.Objects::nonNull).toList();
+        if (courseIds.isEmpty()) return List.of();
+
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        List<Test> tests = testRepository.findByCourseIdInAndDueAtAfterOrderByDueAtAsc(courseIds, now);
+
+        java.util.Map<Long, Course> byId = enrolled.stream()
+                .filter(c -> c.getId() != null)
+                .collect(java.util.stream.Collectors.toMap(Course::getId, c -> c, (a, b) -> a));
+
+        return tests.stream()
+                .filter(t -> t.getDueAt() != null)
+                .limit(10)
+                .map(t -> {
+                    Course c = byId.get(t.getCourse() != null ? t.getCourse().getId() : null);
+                    return com.microservices.courseservice.dto.UpcomingTestDeadlineDto.builder()
+                            .courseId(c != null ? c.getId() : (t.getCourse() != null ? t.getCourse().getId() : null))
+                            .courseTitle(c != null ? c.getTitle() : null)
+                            .courseTitleKz(c != null ? c.getTitleKz() : null)
+                            .courseTitleEn(c != null ? c.getTitleEn() : null)
+                            .testId(t.getId())
+                            .testTitle(t.getTitle())
+                            .testTitleKz(t.getTitleKz())
+                            .testTitleEn(t.getTitleEn())
+                            .dueAt(t.getDueAt().toString())
+                            .build();
+                })
+                .toList();
     }
 
     @Transactional

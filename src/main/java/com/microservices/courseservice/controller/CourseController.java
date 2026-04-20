@@ -269,6 +269,14 @@ public class CourseController {
                 jwt);
     }
 
+    @PatchMapping("/tests/{testId}/settings")
+    public com.microservices.courseservice.model.Test updateTestSettings(
+            @PathVariable Long testId,
+            @RequestBody com.microservices.courseservice.dto.UpdateTestSettingsRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.updateTestSettings(testId, request.getMaxAttempts(), request.getDueAt(), jwt);
+    }
+
     @GetMapping("/{courseId}/test-results")
     public java.util.List<com.microservices.courseservice.dto.TestAttemptTeacherRowDto> getTestResults(
             @PathVariable Long courseId,
@@ -277,9 +285,15 @@ public class CourseController {
     }
 
     @GetMapping("/my/test-attempts")
-    public java.util.List<com.microservices.courseservice.model.TestAttempt> getMyTestAttempts(
+    public java.util.List<com.microservices.courseservice.dto.MyTestAttemptDto> getMyTestAttempts(
             @AuthenticationPrincipal Jwt jwt) {
-        return courseService.getMyTestAttempts(jwt.getSubject());
+        return courseService.getMyTestAttemptDtos(jwt.getSubject());
+    }
+
+    @GetMapping("/my/upcoming-test-deadlines")
+    public java.util.List<com.microservices.courseservice.dto.UpcomingTestDeadlineDto> getMyUpcomingTestDeadlines(
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getMyUpcomingTestDeadlines(jwt);
     }
 
     @GetMapping("/admin/platform-stats")
