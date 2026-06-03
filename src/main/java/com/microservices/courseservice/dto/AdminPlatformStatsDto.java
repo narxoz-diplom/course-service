@@ -17,6 +17,5 @@ public class AdminPlatformStatsDto {
     private long archivedCourses;
     private long totalLessons;
     private long totalTests;
-    /** Сумма записей студентов по всем курсам (один студент на двух курсах = 2). */
     private long totalEnrollmentSlots;
 }

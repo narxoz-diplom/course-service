@@ -33,9 +33,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.*;
 
-/**
- * Unit tests for CourseService quality-gate integration: validation before save, 1 regenerate on fail.
- */
 @ExtendWith(MockitoExtension.class)
 class CourseServiceQualityGateTest {
 

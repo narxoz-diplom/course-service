@@ -11,10 +11,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.*;
 
-/**
- * Quality gates for lessons and test questions before persistence:
- * min-length content, non-empty required fields, valid order, deduplication by title/content.
- */
 @Slf4j
 @Component
 public class LessonTestQualityGate {
@@ -36,11 +32,9 @@ public class LessonTestQualityGate {
     @Value("${course-service.quality-gate.min-question-correct-length:" + DEFAULT_MIN_QUESTION_CORRECT_LENGTH + "}")
     private int minQuestionCorrectLength = DEFAULT_MIN_QUESTION_CORRECT_LENGTH;
 
-    /** Drop batch lesson if Jaccard(word) similarity with an earlier kept lesson exceeds this (0–1). */
     @Value("${course-service.quality-gate.max-batch-content-jaccard:0.92}")
     private double maxBatchContentJaccard = 0.92;
 
-    /** Constructor for testing with explicit limits. */
     public LessonTestQualityGate(int minLessonTitleLength, int minLessonContentLength,
                                 int minQuestionTextLength, int minQuestionCorrectLength) {
         this.minLessonTitleLength = minLessonTitleLength;
@@ -98,9 +92,6 @@ public class LessonTestQualityGate {
         return union.isEmpty() ? 0.0 : (double) inter.size() / (double) union.size();
     }
 
-    /**
-     * Validates a single lesson (for create/update). Throws QualityGateException on failure.
-     */
     public void validateLesson(Lesson lesson) {
         if (lesson == null) {
             throw new QualityGateException("Lesson must not be null");
@@ -124,9 +115,6 @@ public class LessonTestQualityGate {
         }
     }
 
-    /**
-     * Validates a single question (for create/update). Throws QualityGateException on failure.
-     */
     public void validateQuestion(Question question) {
         if (question == null) {
             throw new QualityGateException("Question must not be null");
@@ -150,10 +138,6 @@ public class LessonTestQualityGate {
         }
     }
 
-    /**
-     * Validates and deduplicates RAG lessons (DTO). Returns filtered list with normalized order 1,2,3...
-     * Throws QualityGateException if result would be empty.
-     */
     public List<RagLessonDto> validateAndDeduplicateRagLessons(List<RagLessonDto> ragLessons, List<Lesson> existingLessons) {
         List<Map<String, Object>> maps = new ArrayList<>();
         for (RagLessonDto dto : ragLessons != null ? ragLessons : List.<RagLessonDto>of()) {
@@ -178,10 +162,6 @@ public class LessonTestQualityGate {
         return result;
     }
 
-    /**
-     * Validates and deduplicates RAG quiz questions (DTO). Returns filtered list.
-     * Throws QualityGateException if result would be empty.
-     */
     public List<RagQuizQuestionDto> validateAndDeduplicateRagQuestions(List<RagQuizQuestionDto> questions) {
         if (questions == null || questions.isEmpty()) {
             throw new QualityGateException("At least one question is required for the test");
@@ -215,10 +195,6 @@ public class LessonTestQualityGate {
         return v != null ? v.toString().trim() : def;
     }
 
-    /**
-     * Validates and deduplicates RAG lessons (Map from RAG response). Normalizes order to 1,2,3...
-     * Returns filtered list; throws QualityGateException if result would be empty or validation fails.
-     */
     private List<Map<String, Object>> validateAndDeduplicateRagLessonsMaps(List<Map<String, Object>> ragLessons, List<Lesson> existingLessons) {
         if (ragLessons == null || ragLessons.isEmpty()) {
             throw new QualityGateException("At least one lesson is required");
@@ -270,9 +246,6 @@ public class LessonTestQualityGate {
         return lowSimilarity;
     }
 
-    /**
-     * Remove lessons whose body is almost identical (Jaccard on words) to an earlier kept lesson.
-     */
     private List<Map<String, Object>> filterNearDuplicateLessonBodies(List<Map<String, Object>> lessons) {
         if (lessons == null || lessons.isEmpty()) {
             return lessons;
@@ -296,10 +269,6 @@ public class LessonTestQualityGate {
         return kept;
     }
 
-    /**
-     * Validates and deduplicates RAG quiz questions (Map from RAG response).
-     * Returns filtered list; throws QualityGateException if result would be empty.
-     */
     private List<Map<String, Object>> validateAndDeduplicateRagQuestionsMaps(List<Map<String, Object>> questions) {
         if (questions == null || questions.isEmpty()) {
             throw new QualityGateException("At least one question is required for the test");

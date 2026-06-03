@@ -23,7 +23,6 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(RagClientException.class)
     public ResponseEntity<String> handleRagClientException(RagClientException e) {
         log.warn("RAG client error: {}", e.getMessage());
-        // Ошибки контракта/данных от RAG считаем ошибкой запроса со стороны клиента
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
     }
 

@@ -13,9 +13,6 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * Unit tests for LessonTestQualityGate: min-length, non-empty fields, order, deduplication.
- */
 class LessonTestQualityGateTest {
 
     private static final int MIN_TITLE = 2;

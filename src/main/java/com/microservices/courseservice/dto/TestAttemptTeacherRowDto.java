@@ -5,9 +5,6 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/**
- * Slim row for teacher/admin test results table (no questions payload).
- */
 @Data
 @Builder
 @NoArgsConstructor

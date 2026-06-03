@@ -18,9 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Map;
 
-/**
- * One outline lesson = one transaction so a long-running job commits incrementally.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j

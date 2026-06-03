@@ -75,10 +75,6 @@ public class BackfillLocalizationWorker {
         );
     }
 
-    /**
-     * Runs backfill in a transaction and reports progress via callback.
-     * Permission checks must be done BEFORE calling this method.
-     */
     @Transactional
     public Map<String, Object> run(
             Long courseId,

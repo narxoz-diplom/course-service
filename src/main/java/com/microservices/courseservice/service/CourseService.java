@@ -99,11 +99,6 @@ public class CourseService {
         return created;
     }
 
-    /**
-     * Uses an explicit read-only {@link TransactionTemplate} so lazy collections initialize while the session is open.
-     * Works for {@code @Async} and other internal callers (unlike {@code @Transactional} on a method called via {@code this}).
-     * Does not increment view counters (use {@link #getCourseForViewer} for end-user course pages).
-     */
     public Course getCourseById(Long id) {
         return readOnlyCourseTx.execute(
                 status -> {
@@ -120,9 +115,6 @@ public class CourseService {
                 });
     }
 
-    /**
-     * Full course for participants / staff, or a safe preview for published courses when the user is not enrolled.
-     */
     public CourseViewerResponse getCourseForViewer(Long id, Jwt jwt) {
         return readOnlyCourseTx.execute(
                 status -> {
@@ -207,7 +199,6 @@ public class CourseService {
         validateStudentCourseAccess(course, jwt);
     }
 
-    /** Instructor, enrolled student (or allowed-email), or admin — not arbitrary teacher. */
     private void assertCanViewCourseMembers(Course course, Jwt jwt) {
         if (RoleUtil.isAdmin(jwt)) {
             return;
@@ -266,7 +257,7 @@ public class CourseService {
         return courseRepository.findByEnrolledStudentsContaining(studentId);
     }
 
-    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    @Transactional(readOnly = true)
     public List<SearchResultDto> searchMaterials(String rawQuery, Integer requestedLimit, Jwt jwt) {
         if (jwt == null) {
             throw new AccessDeniedException("Authentication required");
@@ -583,9 +574,6 @@ public class CourseService {
                 collectionName, filterFileIds, prompt, genRequest.getTopK(), genRequest.getParams());
     }
 
-    /**
-     * Async / internal: only the real course instructor (not admin impersonation).
-     */
     public CourseOutlineResponse generateLessonOutlineForInstructor(
             Long courseId, GenerateLessonsRequest genRequest, String instructorId) {
         Course course = getCourseById(courseId);
@@ -601,11 +589,6 @@ public class CourseService {
         return generateLessonsFromOutlineAuthorized(courseId, genRequest, jwt, null);
     }
 
-    /**
-     * Background generation: instructor id must match course owner (no admin bypass in jobs).
-     *
-     * @param jobId when non-null, job row is updated with incremental progress and marked COMPLETED at the end.
-     */
     public List<Lesson> generateLessonsFromOutlineForInstructor(
             Long courseId, GenerateFromOutlineRequest genRequest, String instructorId, String jobId) {
         Course course = getCourseById(courseId);
@@ -620,10 +603,6 @@ public class CourseService {
         return generateLessonsFromOutlineAuthorized(courseId, genRequest, jobJwt, jobId);
     }
 
-    /**
-     * Each lesson is persisted in its own transaction ({@link OutlineLessonStepService}) so a failure late in the job
-     * does not roll back earlier lessons. Optional {@code jobId} ties into {@link LessonGenerationJob} progress fields.
-     */
     private List<Lesson> generateLessonsFromOutlineAuthorized(
             Long courseId,
             GenerateFromOutlineRequest genRequest,
@@ -1147,7 +1126,7 @@ public class CourseService {
         return jwt.getSubject();
     }
 
-    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    @Transactional(readOnly = true)
     public com.microservices.courseservice.dto.CourseParticipantsDto getCourseParticipants(Long courseId, Jwt jwt) {
         Course course = courseRepository.findById(courseId)
                 .orElseThrow(() -> new RuntimeException("Course not found with id: " + courseId));
@@ -1213,7 +1192,6 @@ public class CourseService {
         }
     }
 
-    /** For other services (e.g. async jobs) that need the same rule as update endpoints. */
     public void assertCanMutateCourseContent(Long courseId, Jwt jwt) {
         Course course = getCourseById(courseId);
         validateCourseUpdatePermission(course, jwt);

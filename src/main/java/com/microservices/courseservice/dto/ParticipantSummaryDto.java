@@ -12,7 +12,6 @@ import lombok.NoArgsConstructor;
 public class ParticipantSummaryDto {
 
     private String userId;
-    /** Email or username from enrollment / course creation; may be null for legacy rows */
     private String displayLabel;
     private String role;
 }

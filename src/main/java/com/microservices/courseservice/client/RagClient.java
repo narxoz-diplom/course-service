@@ -54,10 +54,6 @@ public class RagClient {
         return t;
     }
 
-    /**
-     * Map transient (timeout, connection) and downstream errors to RagClientException
-     * so callers get a consistent error type. 4xx/5xx are already mapped in onStatus.
-     */
     private static Throwable mapToRagClientException(Throwable t) {
         if (t instanceof RagClientException) {
             return t;
@@ -112,7 +108,6 @@ public class RagClient {
         }
     }
 
-    /** Retry only on timeout/connection (transient), not on 4xx/5xx. */
     private static boolean isTransient(Throwable t) {
         if (t instanceof RagClientException || t instanceof WebClientResponseException) {
             return false;
@@ -125,16 +120,10 @@ public class RagClient {
         return t instanceof TimeoutException || t instanceof ConnectException;
     }
 
-    /**
-     * Generate lessons from RAG collection (legacy one-shot).
-     */
     public List<RagLessonDto> generateLessons(String collectionName, List<Long> fileIds, String prompt) {
         return generateLessons(collectionName, fileIds, prompt, null, null);
     }
 
-    /**
-     * Generate lessons with optional top_k and pedagogy params.
-     */
     public List<RagLessonDto> generateLessons(
             String collectionName,
             List<Long> fileIds,
@@ -326,15 +315,6 @@ public class RagClient {
         return response;
     }
 
-    /**
-     * Generate quiz/test from RAG collection (LMS endpoint).
-     *
-     * @param collectionName course collection (e.g. course_1)
-     * @param fileIds        optional filter by file IDs; if null/empty, use all files
-     * @param lessonIds      optional filter by lesson IDs
-     * @param prompt         optional prompt
-     * @return list of questions: [{question, options, correct, explanation, hint}, ...]
-     */
     public List<RagQuizQuestionDto> generateQuiz(
             String collectionName, List<Long> fileIds, List<Long> lessonIds, String prompt) {
         return generateQuiz(collectionName, fileIds, lessonIds, prompt, null, null);
@@ -412,9 +392,6 @@ public class RagClient {
         return response;
     }
 
-    /**
-     * Vectorize lesson content for RAG (enables test generation filtered by lesson).
-     */
     public void vectorizeText(String text, String collectionName, Map<String, Object> metadata) {
         var request = new java.util.HashMap<String, Object>();
         request.put("text", text);
