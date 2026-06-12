@@ -115,7 +115,7 @@ public class CourseController {
 
     @PostMapping("/{courseId}/lessons/generate-from-files")
     @ResponseStatus(HttpStatus.CREATED)
-    public List<Lesson> generateLessonsFromFiles(
+    public com.microservices.courseservice.dto.GenerateLessonsResultDto generateLessonsFromFiles(
             @PathVariable Long courseId,
             @RequestBody com.microservices.courseservice.dto.GenerateLessonsRequest request,
             @AuthenticationPrincipal Jwt jwt) {
@@ -304,7 +304,7 @@ public class CourseController {
 
     @PostMapping("/{courseId}/tests/generate")
     @ResponseStatus(HttpStatus.CREATED)
-    public com.microservices.courseservice.model.Test generateTest(
+    public com.microservices.courseservice.dto.GenerateTestResultDto generateTest(
             @PathVariable Long courseId,
             @RequestBody com.microservices.courseservice.dto.GenerateTestRequest request,
             @AuthenticationPrincipal Jwt jwt) {

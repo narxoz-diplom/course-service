@@ -2,6 +2,7 @@ package com.microservices.courseservice.client;
 
 import com.microservices.courseservice.dto.CourseOutlineResponse;
 import com.microservices.courseservice.dto.LessonGenerationParamsDto;
+import com.microservices.courseservice.dto.RagGenerationContext;
 import com.microservices.courseservice.dto.RagLessonDto;
 import com.microservices.courseservice.dto.RagLessonsResponse;
 import com.microservices.courseservice.dto.RagQuizQuestionDto;
@@ -77,6 +78,18 @@ public class RagClient {
 
     private static final int TOP_K_CAP = 2000;
 
+    static void putAiGenerationContext(Map<String, Object> body, RagGenerationContext ctx) {
+        if (ctx == null) {
+            return;
+        }
+        if (ctx.llmModelId() != null && !ctx.llmModelId().isBlank()) {
+            body.put("llm_model_id", ctx.llmModelId());
+        }
+        if (ctx.generationRunId() != null && !ctx.generationRunId().isBlank()) {
+            body.put("generation_run_id", ctx.generationRunId());
+        }
+    }
+
     static void putGenerationParams(Map<String, Object> body, LessonGenerationParamsDto p) {
         if (p == null) {
             return;
@@ -130,7 +143,18 @@ public class RagClient {
             String prompt,
             Integer topK,
             LessonGenerationParamsDto params) {
-        return generateLessonsResponse(collectionName, fileIds, prompt, topK, params, null).getLessons();
+        return generateLessons(collectionName, fileIds, prompt, topK, params, null);
+    }
+
+    public List<RagLessonDto> generateLessons(
+            String collectionName,
+            List<Long> fileIds,
+            String prompt,
+            Integer topK,
+            LessonGenerationParamsDto params,
+            RagGenerationContext generationContext) {
+        return generateLessonsResponse(
+                collectionName, fileIds, prompt, topK, params, null, generationContext).getLessons();
     }
 
     public RagLessonsResponse generateLessonsResponse(
@@ -140,6 +164,17 @@ public class RagClient {
             Integer topK,
             LessonGenerationParamsDto params,
             List<String> languages) {
+        return generateLessonsResponse(collectionName, fileIds, prompt, topK, params, languages, null);
+    }
+
+    public RagLessonsResponse generateLessonsResponse(
+            String collectionName,
+            List<Long> fileIds,
+            String prompt,
+            Integer topK,
+            LessonGenerationParamsDto params,
+            List<String> languages,
+            RagGenerationContext generationContext) {
         var request = new java.util.HashMap<String, Object>();
         request.put("collection_name", collectionName);
         String p = prompt != null && !prompt.isBlank() ? prompt
@@ -157,6 +192,7 @@ public class RagClient {
             request.put("languages", languages);
         }
         putGenerationParams(request, params);
+        putAiGenerationContext(request, generationContext);
 
         RagLessonsResponse response = webClient.post()
                 .uri("/api/v1/generate-lessons")
@@ -198,6 +234,16 @@ public class RagClient {
             String prompt,
             Integer topK,
             LessonGenerationParamsDto params) {
+        return generateCourseOutline(collectionName, fileIds, prompt, topK, params, null);
+    }
+
+    public CourseOutlineResponse generateCourseOutline(
+            String collectionName,
+            List<Long> fileIds,
+            String prompt,
+            Integer topK,
+            LessonGenerationParamsDto params,
+            RagGenerationContext generationContext) {
         var request = new java.util.HashMap<String, Object>();
         request.put("collection_name", collectionName);
         if (prompt != null && !prompt.isBlank()) {
@@ -210,6 +256,7 @@ public class RagClient {
             request.put("file_ids", fileIds.stream().map(String::valueOf).toList());
         }
         putGenerationParams(request, params);
+        putAiGenerationContext(request, generationContext);
 
         CourseOutlineResponse response = webClient.post()
                 .uri("/api/v1/generate-course-outline")
@@ -267,6 +314,21 @@ public class RagClient {
             int topK,
             LessonGenerationParamsDto params,
             List<String> languages) {
+        return generateSingleLessonResponse(
+                collectionName, fileIds, title, summary, lessonIndex, totalLessons, topK, params, languages, null);
+    }
+
+    public RagLessonsResponse generateSingleLessonResponse(
+            String collectionName,
+            List<Long> fileIds,
+            String title,
+            String summary,
+            int lessonIndex,
+            int totalLessons,
+            int topK,
+            LessonGenerationParamsDto params,
+            List<String> languages,
+            RagGenerationContext generationContext) {
         var request = new java.util.HashMap<String, Object>();
         request.put("collection_name", collectionName);
         request.put("title", title);
@@ -281,6 +343,7 @@ public class RagClient {
             request.put("languages", languages);
         }
         putGenerationParams(request, params);
+        putAiGenerationContext(request, generationContext);
 
         RagLessonsResponse response = webClient.post()
                 .uri("/api/v1/generate-single-lesson-lms")
@@ -327,7 +390,20 @@ public class RagClient {
             String prompt,
             Integer questionCount,
             String difficulty) {
-        return generateQuizResponse(collectionName, fileIds, lessonIds, prompt, questionCount, difficulty, null).getQuestions();
+        return generateQuiz(collectionName, fileIds, lessonIds, prompt, questionCount, difficulty, null);
+    }
+
+    public List<RagQuizQuestionDto> generateQuiz(
+            String collectionName,
+            List<Long> fileIds,
+            List<Long> lessonIds,
+            String prompt,
+            Integer questionCount,
+            String difficulty,
+            RagGenerationContext generationContext) {
+        return generateQuizResponse(
+                collectionName, fileIds, lessonIds, prompt, questionCount, difficulty, null, generationContext)
+                .getQuestions();
     }
 
     public RagQuizResponse generateQuizResponse(
@@ -338,6 +414,19 @@ public class RagClient {
             Integer questionCount,
             String difficulty,
             List<String> languages) {
+        return generateQuizResponse(
+                collectionName, fileIds, lessonIds, prompt, questionCount, difficulty, languages, null);
+    }
+
+    public RagQuizResponse generateQuizResponse(
+            String collectionName,
+            List<Long> fileIds,
+            List<Long> lessonIds,
+            String prompt,
+            Integer questionCount,
+            String difficulty,
+            List<String> languages,
+            RagGenerationContext generationContext) {
         var requestBuilder = new java.util.HashMap<String, Object>();
         requestBuilder.put("collection_name", collectionName);
         requestBuilder.put("prompt", prompt != null ? prompt : "Создай тест по загруженным материалам.");
@@ -357,6 +446,7 @@ public class RagClient {
         if (languages != null && !languages.isEmpty()) {
             requestBuilder.put("languages", languages);
         }
+        putAiGenerationContext(requestBuilder, generationContext);
 
         RagQuizResponse response = webClient.post()
                 .uri("/api/v1/generate-quiz-lms")

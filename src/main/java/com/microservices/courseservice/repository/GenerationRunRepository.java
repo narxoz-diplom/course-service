@@ -1,0 +1,11 @@
+package com.microservices.courseservice.repository;
+
+import com.microservices.courseservice.model.ai.GenerationRun;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+import java.util.Optional;
+
+public interface GenerationRunRepository extends JpaRepository<GenerationRun, String> {
+
+    Optional<GenerationRun> findByTeacherIdAndIdempotencyKey(String teacherId, String idempotencyKey);
+}

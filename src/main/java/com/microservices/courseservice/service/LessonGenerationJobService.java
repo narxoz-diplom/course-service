@@ -25,6 +25,7 @@ public class LessonGenerationJobService {
     private final LessonGenerationJobRepository jobRepository;
     private final LessonGenerationJobAsyncRunner asyncRunner;
     private final CourseService courseService;
+    private final AiGenerationOrchestratorService aiGenerationOrchestrator;
     private final ObjectMapper objectMapper;
 
     @Transactional
@@ -80,14 +81,20 @@ public class LessonGenerationJobService {
             throw new org.springframework.security.access.AccessDeniedException("Job not accessible");
         }
         courseService.assertCanMutateCourseContent(courseId, jwt);
-        return LessonGenerationJobDto.builder()
+        var builder = LessonGenerationJobDto.builder()
                 .jobId(job.getId())
                 .status(job.getStatus().name())
+                .generationRunId(job.getGenerationRunId())
                 .createdLessonIds(job.getCreatedLessonIds())
                 .totalLessons(job.getTotalLessons())
                 .completedLessons(job.getCompletedLessons())
                 .currentLessonTitle(job.getCurrentLessonTitle())
-                .errorMessage(job.getErrorMessage())
-                .build();
+                .errorMessage(job.getErrorMessage());
+        if (job.getGenerationRunId() != null
+                && (job.getStatus() == LessonGenerationJob.Status.COMPLETED
+                        || job.getStatus() == LessonGenerationJob.Status.FAILED)) {
+            builder.usageSummary(aiGenerationOrchestrator.usageSummary(job.getGenerationRunId()));
+        }
+        return builder.build();
     }
 }

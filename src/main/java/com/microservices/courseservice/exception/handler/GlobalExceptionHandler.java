@@ -1,6 +1,7 @@
 package com.microservices.courseservice.exception.handler;
 
 import com.microservices.courseservice.client.RagClientException;
+import com.microservices.courseservice.exception.AiModelException;
 import com.microservices.courseservice.exception.QualityGateException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -18,6 +19,15 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleAccessDeniedException(AccessDeniedException e) {
         log.error("Access denied: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
+    }
+
+    @ExceptionHandler(AiModelException.class)
+    public ResponseEntity<java.util.Map<String, String>> handleAiModelException(AiModelException e) {
+        log.warn("AI model error [{}]: {}", e.getCode(), e.getMessage());
+        return ResponseEntity.status(e.getStatus())
+                .body(java.util.Map.of(
+                        "code", e.getCode().name(),
+                        "message", e.getMessage()));
     }
 
     @ExceptionHandler(RagClientException.class)

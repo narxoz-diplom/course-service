@@ -12,4 +12,6 @@ public class GenerateTestRequest {
     private Integer questionCount;
     /** easy | medium | hard */
     private String difficulty;
+    private String modelId;
+    private String idempotencyKey;
 }

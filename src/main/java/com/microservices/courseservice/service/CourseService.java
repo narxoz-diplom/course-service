@@ -8,7 +8,14 @@ import com.microservices.courseservice.dto.CourseViewerResponse;
 import com.microservices.courseservice.dto.CourseOutlineResponse;
 import com.microservices.courseservice.dto.GenerateFromOutlineRequest;
 import com.microservices.courseservice.dto.GenerateLessonsRequest;
+import com.microservices.courseservice.dto.GenerateLessonsResultDto;
 import com.microservices.courseservice.dto.GenerateTestRequest;
+import com.microservices.courseservice.dto.GenerateTestResultDto;
+import com.microservices.courseservice.dto.RagGenerationContext;
+import com.microservices.courseservice.dto.ai.GenerationUsageSummaryDto;
+import com.microservices.courseservice.dto.ai.RagLlmUsageDto;
+import com.microservices.courseservice.model.ai.GenerationRun;
+import com.microservices.courseservice.model.ai.GenerationType;
 import com.microservices.courseservice.dto.LessonGenerationParamsDto;
 import com.microservices.courseservice.dto.LessonOutlineItemDto;
 import com.microservices.courseservice.dto.RagLessonDto;
@@ -72,6 +79,7 @@ public class CourseService {
     private final OutlineLessonStepService outlineLessonStepService;
     private final LessonGenerationJobRepository lessonGenerationJobRepository;
     private final PlatformTransactionManager transactionManager;
+    private final AiGenerationOrchestratorService aiGenerationOrchestrator;
 
     private TransactionTemplate readOnlyCourseTx;
 
@@ -530,9 +538,17 @@ public class CourseService {
     }
 
     @Transactional
-    public List<Lesson> generateLessonsFromFiles(Long courseId, GenerateLessonsRequest genRequest, Jwt jwt) {
+    public GenerateLessonsResultDto generateLessonsFromFiles(Long courseId, GenerateLessonsRequest genRequest, Jwt jwt) {
         Course course = getCourseById(courseId);
         validateCourseUpdatePermission(course, jwt);
+
+        AiGenerationOrchestratorService.ActiveGeneration active = aiGenerationOrchestrator.start(
+                jwt,
+                courseId,
+                null,
+                GenerationType.LESSON_FROM_FILES,
+                genRequest.getModelId(),
+                genRequest.getIdempotencyKey());
 
         String collectionName = "course_" + courseId;
         List<Long> filterFileIds = resolveCourseFileFilter(courseId, genRequest.getFileIds());
@@ -542,36 +558,80 @@ public class CourseService {
             prompt = null;
         }
 
-        List<Lesson> existingLessons = lessonService.getLessonsByCourse(courseId);
-        var ragResponse = ragClient.generateLessonsResponse(
-                collectionName,
-                filterFileIds,
-                prompt,
-                genRequest.getTopK(),
-                genRequest.getParams(),
-                List.of("ru", "kz", "en"));
-        List<RagLessonDto> validatedLessons = validateLessonsWithRetry(
-                collectionName, filterFileIds, prompt, genRequest.getTopK(), genRequest.getParams(),
-                ragResponse.getLessons(), existingLessons);
-
-        return persistRagLessons(course, courseId, collectionName, validatedLessons, ragResponse, jwt);
+        try {
+            List<Lesson> existingLessons = lessonService.getLessonsByCourse(courseId);
+            var ragResponse = ragClient.generateLessonsResponse(
+                    collectionName,
+                    filterFileIds,
+                    prompt,
+                    genRequest.getTopK(),
+                    genRequest.getParams(),
+                    List.of("ru", "kz", "en"),
+                    active.ragContext());
+            aiGenerationOrchestrator.recordRagUsage(active.run(), ragResponse.getUsage());
+            List<RagLessonDto> validatedLessons = validateLessonsWithRetry(
+                    collectionName,
+                    filterFileIds,
+                    prompt,
+                    genRequest.getTopK(),
+                    genRequest.getParams(),
+                    ragResponse.getLessons(),
+                    existingLessons,
+                    active.run(),
+                    active.ragContext());
+            List<Lesson> lessons = persistRagLessons(
+                    course, courseId, collectionName, validatedLessons, ragResponse, jwt);
+            GenerationUsageSummaryDto usageSummary = aiGenerationOrchestrator.finishSuccess(
+                    active.run(), ragResponse.getRequestId(), ragResponse.getUsage());
+            return GenerateLessonsResultDto.builder()
+                    .lessons(lessons)
+                    .usageSummary(usageSummary)
+                    .build();
+        } catch (RuntimeException e) {
+            aiGenerationOrchestrator.finishFailure(active.run(), "generation_failed", null, null);
+            throw e;
+        }
     }
 
     public CourseOutlineResponse generateLessonOutline(Long courseId, GenerateLessonsRequest genRequest, Jwt jwt) {
         Course course = getCourseById(courseId);
         validateCourseUpdatePermission(course, jwt);
-        return buildCourseOutlineResponse(courseId, genRequest);
+        return buildCourseOutlineResponse(courseId, genRequest, jwt);
     }
 
-    private CourseOutlineResponse buildCourseOutlineResponse(Long courseId, GenerateLessonsRequest genRequest) {
+    private CourseOutlineResponse buildCourseOutlineResponse(
+            Long courseId, GenerateLessonsRequest genRequest, Jwt jwt) {
+        AiGenerationOrchestratorService.ActiveGeneration active = aiGenerationOrchestrator.start(
+                jwt,
+                courseId,
+                null,
+                GenerationType.LESSON_OUTLINE,
+                genRequest.getModelId(),
+                genRequest.getIdempotencyKey());
+
         String collectionName = "course_" + courseId;
         List<Long> filterFileIds = resolveCourseFileFilter(courseId, genRequest.getFileIds());
         String prompt = genRequest.getPrompt();
         if (prompt != null && prompt.isBlank()) {
             prompt = null;
         }
-        return ragClient.generateCourseOutline(
-                collectionName, filterFileIds, prompt, genRequest.getTopK(), genRequest.getParams());
+        try {
+            CourseOutlineResponse response = ragClient.generateCourseOutline(
+                    collectionName,
+                    filterFileIds,
+                    prompt,
+                    genRequest.getTopK(),
+                    genRequest.getParams(),
+                    active.ragContext());
+            aiGenerationOrchestrator.recordRagUsage(active.run(), response.getUsage());
+            GenerationUsageSummaryDto usageSummary = aiGenerationOrchestrator.finishSuccess(
+                    active.run(), response.getRequestId(), response.getUsage());
+            response.setUsageSummary(usageSummary);
+            return response;
+        } catch (RuntimeException e) {
+            aiGenerationOrchestrator.finishFailure(active.run(), "generation_failed", null, null);
+            throw e;
+        }
     }
 
     public CourseOutlineResponse generateLessonOutlineForInstructor(
@@ -580,7 +640,12 @@ public class CourseService {
         if (!course.getInstructorId().equals(instructorId)) {
             throw new AccessDeniedException("Only course instructor can generate outline for this course");
         }
-        return buildCourseOutlineResponse(courseId, genRequest);
+        Jwt jobJwt = org.springframework.security.oauth2.jwt.Jwt.withTokenValue("job")
+                .header("alg", "none")
+                .subject(instructorId)
+                .claim("realm_access", Map.of("roles", List.of("teacher")))
+                .build();
+        return buildCourseOutlineResponse(courseId, genRequest, jobJwt);
     }
 
     public List<Lesson> generateLessonsFromOutline(Long courseId, GenerateFromOutlineRequest genRequest, Jwt jwt) {
@@ -611,6 +676,15 @@ public class CourseService {
         if (genRequest.getOutline() == null || genRequest.getOutline().isEmpty()) {
             throw new RuntimeException("Outline must contain at least one lesson");
         }
+
+        AiGenerationOrchestratorService.ActiveGeneration active = aiGenerationOrchestrator.start(
+                jwt,
+                courseId,
+                jobId,
+                GenerationType.LESSON_FROM_OUTLINE,
+                genRequest.getModelId(),
+                genRequest.getIdempotencyKey());
+
         String collectionName = "course_" + courseId;
         List<Long> filterFileIds = resolveCourseFileFilter(courseId, genRequest.getFileIds());
 
@@ -629,6 +703,7 @@ public class CourseService {
 
         if (jobId != null) {
             lessonGenerationJobRepository.findById(jobId).ifPresent(job -> {
+                job.setGenerationRunId(active.run().getId());
                 job.setTotalLessons(total);
                 job.setCompletedLessons(0);
                 job.setCurrentLessonTitle(items.isEmpty() ? null : items.get(0).getTitle());
@@ -636,52 +711,61 @@ public class CourseService {
             });
         }
 
-        for (int i = 0; i < items.size(); i++) {
-            LessonOutlineItemDto item = items.get(i);
-            int lessonNum = i + 1;
-            if (jobId != null) {
-                final String title = item.getTitle();
-                lessonGenerationJobRepository.findById(jobId).ifPresent(job -> {
-                    job.setCurrentLessonTitle(title);
-                    lessonGenerationJobRepository.save(job);
-                });
+        try {
+            for (int i = 0; i < items.size(); i++) {
+                LessonOutlineItemDto item = items.get(i);
+                int lessonNum = i + 1;
+                if (jobId != null) {
+                    final String title = item.getTitle();
+                    lessonGenerationJobRepository.findById(jobId).ifPresent(job -> {
+                        job.setCurrentLessonTitle(title);
+                        lessonGenerationJobRepository.save(job);
+                    });
+                }
+                List<Lesson> prior = new ArrayList<>(existingLessons);
+                prior.addAll(created);
+                Lesson saved = outlineLessonStepService.generateAndPersistOne(
+                        courseId,
+                        collectionName,
+                        filterFileIds,
+                        item,
+                        lessonNum,
+                        total,
+                        prior,
+                        params,
+                        jwt,
+                        active.ragContext(),
+                        active.run());
+                created.add(saved);
+                if (jobId != null) {
+                    lessonGenerationJobRepository.findById(jobId).ifPresent(job -> {
+                        job.setCompletedLessons(created.size());
+                        job.setCreatedLessonIds(
+                                created.stream().map(l -> String.valueOf(l.getId())).collect(Collectors.joining(",")));
+                        lessonGenerationJobRepository.save(job);
+                    });
+                }
             }
-            List<Lesson> prior = new ArrayList<>(existingLessons);
-            prior.addAll(created);
-            Lesson saved = outlineLessonStepService.generateAndPersistOne(
-                    courseId,
-                    collectionName,
-                    filterFileIds,
-                    item,
-                    lessonNum,
-                    total,
-                    prior,
-                    params,
-                    jwt);
-            created.add(saved);
+
+            aiGenerationOrchestrator.finishSuccess(active.run(), null, null);
+
             if (jobId != null) {
                 lessonGenerationJobRepository.findById(jobId).ifPresent(job -> {
+                    job.setStatus(LessonGenerationJob.Status.COMPLETED);
                     job.setCompletedLessons(created.size());
                     job.setCreatedLessonIds(
                             created.stream().map(l -> String.valueOf(l.getId())).collect(Collectors.joining(",")));
+                    job.setCurrentLessonTitle(null);
+                    job.setErrorMessage(null);
                     lessonGenerationJobRepository.save(job);
                 });
             }
-        }
 
-        if (jobId != null) {
-            lessonGenerationJobRepository.findById(jobId).ifPresent(job -> {
-                job.setStatus(LessonGenerationJob.Status.COMPLETED);
-                job.setCompletedLessons(created.size());
-                job.setCreatedLessonIds(
-                        created.stream().map(l -> String.valueOf(l.getId())).collect(Collectors.joining(",")));
-                job.setCurrentLessonTitle(null);
-                job.setErrorMessage(null);
-                lessonGenerationJobRepository.save(job);
-            });
+            return created;
+        } catch (RuntimeException e) {
+            aiGenerationOrchestrator.finishFailure(active.run(), "generation_failed", null, null);
+            throw e;
         }
-
-        return created;
     }
 
     private List<Lesson> persistRagLessons(
@@ -738,20 +822,39 @@ public class CourseService {
             Integer topK,
             LessonGenerationParamsDto params,
             List<RagLessonDto> ragLessons,
-            List<Lesson> existingLessons) {
+            List<Lesson> existingLessons,
+            GenerationRun run,
+            RagGenerationContext ragContext) {
         try {
             return qualityGate.validateAndDeduplicateRagLessons(ragLessons, existingLessons);
         } catch (QualityGateException e) {
             log.warn("Quality gate failed for generated lessons, retrying once: {}", e.getMessage());
-            List<RagLessonDto> retryLessons = ragClient.generateLessons(collectionName, filterFileIds, prompt, topK, params);
-            return qualityGate.validateAndDeduplicateRagLessons(retryLessons, existingLessons);
+            var retryResponse = ragClient.generateLessonsResponse(
+                    collectionName,
+                    filterFileIds,
+                    prompt,
+                    topK,
+                    params,
+                    List.of("ru", "kz", "en"),
+                    ragContext);
+            RagLlmUsageDto retryUsage = AiGenerationOrchestratorService.withAttemptNumber(retryResponse.getUsage(), 2);
+            aiGenerationOrchestrator.recordRagUsage(run, retryUsage);
+            return qualityGate.validateAndDeduplicateRagLessons(retryResponse.getLessons(), existingLessons);
         }
     }
 
     @Transactional
-    public Test generateTest(Long courseId, GenerateTestRequest testRequest, Jwt jwt) {
+    public GenerateTestResultDto generateTest(Long courseId, GenerateTestRequest testRequest, Jwt jwt) {
         Course course = getCourseById(courseId);
         validateCourseUpdatePermission(course, jwt);
+
+        AiGenerationOrchestratorService.ActiveGeneration active = aiGenerationOrchestrator.start(
+                jwt,
+                courseId,
+                null,
+                GenerationType.QUIZ_GENERATION,
+                testRequest.getModelId(),
+                testRequest.getIdempotencyKey());
 
         String collectionName = "course_" + courseId;
         List<Long> fileIds = testRequest.getFileIds();
@@ -761,64 +864,78 @@ public class CourseService {
             filterFileIds = resolveCourseFileFilter(courseId, fileIds);
         }
 
-        var quizResponse = ragClient.generateQuizResponse(
-                collectionName,
-                filterFileIds,
-                lessonIds,
-                null,
-                testRequest.getQuestionCount(),
-                testRequest.getDifficulty(),
-                List.of("ru", "kz", "en"));
-        List<RagQuizQuestionDto> validatedQuestions = validateQuestionsWithRetry(
-                collectionName,
-                filterFileIds,
-                lessonIds,
-                testRequest.getQuestionCount(),
-                testRequest.getDifficulty(),
-                quizResponse.getQuestions());
+        try {
+            var quizResponse = ragClient.generateQuizResponse(
+                    collectionName,
+                    filterFileIds,
+                    lessonIds,
+                    null,
+                    testRequest.getQuestionCount(),
+                    testRequest.getDifficulty(),
+                    List.of("ru", "kz", "en"),
+                    active.ragContext());
+            aiGenerationOrchestrator.recordRagUsage(active.run(), quizResponse.getUsage());
+            List<RagQuizQuestionDto> validatedQuestions = validateQuestionsWithRetry(
+                    collectionName,
+                    filterFileIds,
+                    lessonIds,
+                    testRequest.getQuestionCount(),
+                    testRequest.getDifficulty(),
+                    quizResponse.getQuestions(),
+                    active.run(),
+                    active.ragContext());
 
-        String title = testRequest.getTitle();
-        Test test = new Test();
-        String baseTitle = title != null && !title.isBlank() ? title : "Тест по курсу";
-        test.setTitle(baseTitle);
-        // Best-effort: if quiz has translations, title is derived; keep null unless teacher provided custom.
-        test.setCourse(course);
-        test.setIsVisible(true);
-        test = testRepository.save(test);
+            String title = testRequest.getTitle();
+            Test test = new Test();
+            String baseTitle = title != null && !title.isBlank() ? title : "Тест по курсу";
+            test.setTitle(baseTitle);
+            test.setCourse(course);
+            test.setIsVisible(true);
+            test = testRepository.save(test);
 
-        var tr = quizResponse.getTranslations();
-        var kzTr = tr != null ? tr.get("kz") : null;
-        var enTr = tr != null ? tr.get("en") : null;
+            var tr = quizResponse.getTranslations();
+            var kzTr = tr != null ? tr.get("kz") : null;
+            var enTr = tr != null ? tr.get("en") : null;
 
-        int order = 1;
-        for (int idx = 0; idx < validatedQuestions.size(); idx++) {
-            RagQuizQuestionDto rq = validatedQuestions.get(idx);
-            Question q = new Question();
-            q.setType(Question.QuestionType.MULTIPLE_CHOICE);
-            q.setText(rq.getQuestion() != null ? rq.getQuestion() : "");
-            Object opts = rq.getOptions();
-            q.setOptions(opts != null ? toJson(opts) : "{}");
-            q.setCorrectAnswer(rq.getCorrect() != null ? rq.getCorrect() : "");
-            q.setExplanation(rq.getExplanation() != null ? rq.getExplanation() : "");
-            q.setHint(rq.getHint() != null ? rq.getHint() : "");
-            if (kzTr != null && idx < kzTr.size() && kzTr.get(idx) != null) {
-                q.setTextKz(kzTr.get(idx).getQuestion());
-                q.setOptionsKz(kzTr.get(idx).getOptions() != null ? toJson(kzTr.get(idx).getOptions()) : null);
-                q.setExplanationKz(kzTr.get(idx).getExplanation());
-                q.setHintKz(kzTr.get(idx).getHint());
+            int order = 1;
+            for (int idx = 0; idx < validatedQuestions.size(); idx++) {
+                RagQuizQuestionDto rq = validatedQuestions.get(idx);
+                Question q = new Question();
+                q.setType(Question.QuestionType.MULTIPLE_CHOICE);
+                q.setText(rq.getQuestion() != null ? rq.getQuestion() : "");
+                Object opts = rq.getOptions();
+                q.setOptions(opts != null ? toJson(opts) : "{}");
+                q.setCorrectAnswer(rq.getCorrect() != null ? rq.getCorrect() : "");
+                q.setExplanation(rq.getExplanation() != null ? rq.getExplanation() : "");
+                q.setHint(rq.getHint() != null ? rq.getHint() : "");
+                if (kzTr != null && idx < kzTr.size() && kzTr.get(idx) != null) {
+                    q.setTextKz(kzTr.get(idx).getQuestion());
+                    q.setOptionsKz(kzTr.get(idx).getOptions() != null ? toJson(kzTr.get(idx).getOptions()) : null);
+                    q.setExplanationKz(kzTr.get(idx).getExplanation());
+                    q.setHintKz(kzTr.get(idx).getHint());
+                }
+                if (enTr != null && idx < enTr.size() && enTr.get(idx) != null) {
+                    q.setTextEn(enTr.get(idx).getQuestion());
+                    q.setOptionsEn(enTr.get(idx).getOptions() != null ? toJson(enTr.get(idx).getOptions()) : null);
+                    q.setExplanationEn(enTr.get(idx).getExplanation());
+                    q.setHintEn(enTr.get(idx).getHint());
+                }
+                q.setTest(test);
+                q.setOrderNumber(order++);
+                qualityGate.validateQuestion(q);
+                questionRepository.save(q);
             }
-            if (enTr != null && idx < enTr.size() && enTr.get(idx) != null) {
-                q.setTextEn(enTr.get(idx).getQuestion());
-                q.setOptionsEn(enTr.get(idx).getOptions() != null ? toJson(enTr.get(idx).getOptions()) : null);
-                q.setExplanationEn(enTr.get(idx).getExplanation());
-                q.setHintEn(enTr.get(idx).getHint());
-            }
-            q.setTest(test);
-            q.setOrderNumber(order++);
-            qualityGate.validateQuestion(q);
-            questionRepository.save(q);
+
+            GenerationUsageSummaryDto usageSummary = aiGenerationOrchestrator.finishSuccess(
+                    active.run(), quizResponse.getRequestId(), quizResponse.getUsage());
+            return GenerateTestResultDto.builder()
+                    .test(test)
+                    .usageSummary(usageSummary)
+                    .build();
+        } catch (RuntimeException e) {
+            aiGenerationOrchestrator.finishFailure(active.run(), "generation_failed", null, null);
+            throw e;
         }
-        return test;
     }
 
     private List<RagQuizQuestionDto> validateQuestionsWithRetry(
@@ -827,14 +944,25 @@ public class CourseService {
             List<Long> lessonIds,
             Integer questionCount,
             String difficulty,
-            List<RagQuizQuestionDto> ragQuestions) {
+            List<RagQuizQuestionDto> ragQuestions,
+            GenerationRun run,
+            RagGenerationContext ragContext) {
         try {
             return qualityGate.validateAndDeduplicateRagQuestions(ragQuestions);
         } catch (QualityGateException e) {
             log.warn("Quality gate failed for generated questions, retrying once: {}", e.getMessage());
-            List<RagQuizQuestionDto> retryQuestions = ragClient.generateQuiz(
-                    collectionName, filterFileIds, lessonIds, null, questionCount, difficulty);
-            return qualityGate.validateAndDeduplicateRagQuestions(retryQuestions);
+            var retryResponse = ragClient.generateQuizResponse(
+                    collectionName,
+                    filterFileIds,
+                    lessonIds,
+                    null,
+                    questionCount,
+                    difficulty,
+                    List.of("ru", "kz", "en"),
+                    ragContext);
+            RagLlmUsageDto retryUsage = AiGenerationOrchestratorService.withAttemptNumber(retryResponse.getUsage(), 2);
+            aiGenerationOrchestrator.recordRagUsage(run, retryUsage);
+            return qualityGate.validateAndDeduplicateRagQuestions(retryResponse.getQuestions());
         }
     }
 

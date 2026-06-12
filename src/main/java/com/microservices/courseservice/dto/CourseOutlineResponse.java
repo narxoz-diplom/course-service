@@ -17,4 +17,8 @@ public class CourseOutlineResponse {
 
     @JsonProperty("request_id")
     private String requestId;
+
+    private com.microservices.courseservice.dto.ai.RagLlmUsageDto usage;
+
+    private com.microservices.courseservice.dto.ai.GenerationUsageSummaryDto usageSummary;
 }

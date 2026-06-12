@@ -9,5 +9,7 @@ public class GenerateLessonsRequest {
     private List<Long> fileIds;
     private String prompt;
     private Integer topK;
+    private String modelId;
+    private String idempotencyKey;
     private LessonGenerationParamsDto params;
 }

@@ -3,7 +3,9 @@ package com.microservices.courseservice.service;
 import com.microservices.courseservice.client.RagClient;
 import com.microservices.courseservice.dto.LessonGenerationParamsDto;
 import com.microservices.courseservice.dto.LessonOutlineItemDto;
+import com.microservices.courseservice.dto.RagGenerationContext;
 import com.microservices.courseservice.dto.RagLessonDto;
+import com.microservices.courseservice.model.ai.GenerationRun;
 import com.microservices.courseservice.exception.QualityGateException;
 import com.microservices.courseservice.model.Course;
 import com.microservices.courseservice.model.Lesson;
@@ -27,6 +29,7 @@ public class OutlineLessonStepService {
     private final RagClient ragClient;
     private final LessonService lessonService;
     private final LessonTestQualityGate qualityGate;
+    private final AiGenerationOrchestratorService aiGenerationOrchestrator;
 
     private static final List<String> GEN_LANGS = List.of("ru", "kz", "en");
 
@@ -40,7 +43,9 @@ public class OutlineLessonStepService {
             int totalLessons,
             List<Lesson> priorLessonsForQualityGate,
             LessonGenerationParamsDto params,
-            Jwt jwt) {
+            Jwt jwt,
+            RagGenerationContext ragContext,
+            GenerationRun generationRun) {
         Course course = courseRepository.findById(courseId)
                 .orElseThrow(() -> new RuntimeException("Course not found with id: " + courseId));
 
@@ -53,7 +58,9 @@ public class OutlineLessonStepService {
                 totalLessons,
                 24,
                 params,
-                GEN_LANGS);
+                GEN_LANGS,
+                ragContext);
+        aiGenerationOrchestrator.recordRagUsage(generationRun, ragResponse.getUsage());
         RagLessonDto dto = ragResponse.getLessons().get(0);
 
         List<RagLessonDto> validated = qualityGate.validateAndDeduplicateRagLessons(

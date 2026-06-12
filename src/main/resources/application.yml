@@ -50,6 +50,18 @@ file-service:
 auth-service:
   url: ${AUTH_SERVICE_URL:http://localhost:8084}
 
+ai:
+  providers:
+    google:
+      enabled: ${AI_GOOGLE_ENABLED:true}
+    openai:
+      enabled: ${AI_OPENAI_ENABLED:false}
+  features:
+    model-selection-enabled: ${AI_MODEL_SELECTION_ENABLED:true}
+  quotas:
+    teacher-default-monthly-tokens: ${AI_TEACHER_DEFAULT_MONTHLY_TOKENS:1000000}
+    teacher-default-daily-tokens: ${AI_TEACHER_DEFAULT_DAILY_TOKENS:150000}
+
 rag:
   service:
     url: ${RAG_SERVICE_URL:http://localhost:8000}

@@ -47,6 +47,9 @@ public class LessonGenerationJob {
     @Column(columnDefinition = "TEXT")
     private String errorMessage;
 
+    @Column(name = "generation_run_id", length = 48)
+    private String generationRunId;
+
     @Column(nullable = false)
     private Instant createdAt = Instant.now();
 

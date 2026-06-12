@@ -7,6 +7,8 @@ import java.util.List;
 @Data
 public class GenerateFromOutlineRequest {
     private List<Long> fileIds;
+    private String modelId;
+    private String idempotencyKey;
     private LessonGenerationParamsDto params;
     /** Teacher-approved outline (edited order/titles allowed). */
     private List<LessonOutlineItemDto> outline;
