@@ -56,6 +56,8 @@ class CourseServiceQualityGateTest {
     @Mock private RagClient ragClient;
     @Mock private TestRepository testRepository;
     @Mock private TestAttemptRepository testAttemptRepository;
+    @Mock private ProgressRepository progressRepository;
+    @Mock private GradeService gradeService;
     @Mock private QuestionRepository questionRepository;
     @Mock private LessonTestQualityGate qualityGate;
     @Mock private AuthServiceClient authServiceClient;
@@ -87,7 +89,8 @@ class CourseServiceQualityGateTest {
                 courseRepository, lessonRepository, videoRepository,
                 courseCacheService, lessonService, cacheService, courseMapper, videoMapper,
                 authServiceClient, fileServiceClient, ragClient,
-                testRepository, testAttemptRepository, questionRepository, qualityGate,
+                testRepository, testAttemptRepository, progressRepository, gradeService,
+                questionRepository, qualityGate,
                 applicationEventPublisher, outlineLessonStepService, lessonGenerationJobRepository,
                 transactionManager, aiGenerationOrchestrator);
         course = new Course();

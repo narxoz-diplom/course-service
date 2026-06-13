@@ -75,6 +75,7 @@ public class CourseService {
     private final TestRepository testRepository;
     private final TestAttemptRepository testAttemptRepository;
     private final ProgressRepository progressRepository;
+    private final GradeService gradeService;
     private final QuestionRepository questionRepository;
     private final LessonTestQualityGate qualityGate;
     private final ApplicationEventPublisher applicationEventPublisher;
@@ -976,10 +977,11 @@ public class CourseService {
         }
     }
 
-    public List<Lesson> getLessonsByCourse(Long courseId, Jwt jwt) {
+    public List<com.microservices.courseservice.dto.LessonGradingOverviewDto> getLessonsByCourse(Long courseId, Jwt jwt) {
         Course course = getCourseById(courseId);
         assertCanViewCourseMaterials(course, jwt);
-        return lessonService.getLessonsByCourse(courseId);
+        List<Lesson> lessons = lessonService.getLessonsByCourse(courseId);
+        return gradeService.buildLessonOverviews(course, lessons);
     }
 
     public Lesson getLessonById(Long lessonId, Jwt jwt) {

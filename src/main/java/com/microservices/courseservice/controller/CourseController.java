@@ -2,6 +2,7 @@ package com.microservices.courseservice.controller;
 
 import com.microservices.courseservice.dto.AdminPlatformStatsDto;
 import com.microservices.courseservice.dto.CourseViewerResponse;
+import com.microservices.courseservice.dto.LessonGradingOverviewDto;
 import com.microservices.courseservice.dto.SearchResultDto;
 import com.microservices.courseservice.dto.StatusUpdateRequest;
 import com.microservices.courseservice.dto.VideoMetadataRequest;
@@ -10,6 +11,7 @@ import com.microservices.courseservice.model.Lesson;
 import com.microservices.courseservice.model.Video;
 import com.microservices.courseservice.service.CacheService;
 import com.microservices.courseservice.service.CourseService;
+import com.microservices.courseservice.service.GradeService;
 import com.microservices.courseservice.service.backfill.BackfillJobDto;
 import com.microservices.courseservice.service.backfill.BackfillLocalizationJobService;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +31,7 @@ import java.util.List;
 public class CourseController {
 
     private final CourseService courseService;
+    private final GradeService gradeService;
     private final CacheService cacheService;
     private final com.microservices.courseservice.service.LessonGenerationJobService lessonGenerationJobService;
     private final BackfillLocalizationJobService backfillLocalizationJobService;
@@ -158,10 +161,17 @@ public class CourseController {
 
     @GetMapping("/{courseId}/lessons")
     @ResponseStatus(HttpStatus.OK)
-    public List<Lesson> getLessons(
+    public List<LessonGradingOverviewDto> getLessons(
             @PathVariable Long courseId,
             @AuthenticationPrincipal Jwt jwt) {
         return courseService.getLessonsByCourse(courseId, jwt);
+    }
+
+    @GetMapping("/{courseId}/grades/my")
+    public com.microservices.courseservice.dto.StudentGradesResponseDto getMyGradesForCourse(
+            @PathVariable Long courseId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return gradeService.getMyGrades(jwt, courseId);
     }
 
     @GetMapping("/lessons/{lessonId}")

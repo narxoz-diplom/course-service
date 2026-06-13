@@ -58,5 +58,28 @@ public class NotificationProducerService {
         log.info("Sent notifications to {} students about new lesson in course {}",
                 studentIds.size(), courseId);
     }
+
+    public void sendGradeNotification(
+            String studentId,
+            String message,
+            Long courseId,
+            Long lessonId,
+            Integer grade) {
+        try {
+            Map<String, Object> notification = Map.of(
+                    "userId", studentId,
+                    "message", message,
+                    "type", "GRADE",
+                    "courseId", courseId != null ? courseId.toString() : "",
+                    "lessonId", lessonId != null ? lessonId.toString() : "",
+                    "grade", grade != null ? grade.toString() : "",
+                    "timestamp", LocalDateTime.now().toString()
+            );
+            rabbitTemplate.convertAndSend(NOTIFICATION_QUEUE, notification);
+            log.debug("Grade notification sent to student {}", studentId);
+        } catch (Exception e) {
+            log.error("Error sending grade notification to student {}: {}", studentId, e.getMessage(), e);
+        }
+    }
 }
 
