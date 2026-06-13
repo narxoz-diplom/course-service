@@ -13,6 +13,7 @@ public interface CourseMapper {
     @Mapping(target = "instructorId", ignore = true)
     @Mapping(target = "enrolledStudents", ignore = true)
     @Mapping(target = "participantDisplayLabels", ignore = true)
+    @Mapping(target = "studentEnrolledAt", ignore = true)
     @Mapping(target = "allowedEmails", ignore = true)
     @Mapping(target = "lessons", ignore = true)
     @Mapping(target = "tests", ignore = true)

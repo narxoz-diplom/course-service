@@ -42,6 +42,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.http.HttpStatus;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -73,6 +74,7 @@ public class CourseService {
     private final RagClient ragClient;
     private final TestRepository testRepository;
     private final TestAttemptRepository testAttemptRepository;
+    private final ProgressRepository progressRepository;
     private final QuestionRepository questionRepository;
     private final LessonTestQualityGate qualityGate;
     private final ApplicationEventPublisher applicationEventPublisher;
@@ -1230,9 +1232,13 @@ public class CourseService {
         if (course.getParticipantDisplayLabels() == null) {
             course.setParticipantDisplayLabels(new java.util.HashMap<>());
         }
+        if (course.getStudentEnrolledAt() == null) {
+            course.setStudentEnrolledAt(new java.util.HashMap<>());
+        }
         course.getParticipantDisplayLabels().put(studentId, displayLabelFromJwt(jwt));
         if (!course.getEnrolledStudents().contains(studentId)) {
             course.getEnrolledStudents().add(studentId);
+            course.getStudentEnrolledAt().put(studentId, LocalDateTime.now());
         }
         courseRepository.save(course);
         log.info("Student {} enrolled in course {}", studentId, courseId);
@@ -1265,33 +1271,192 @@ public class CourseService {
         if (course.getEnrolledStudents() != null) {
             course.getEnrolledStudents().size();
         }
-        java.util.Map<String, String> labels = course.getParticipantDisplayLabels() != null
-                ? new java.util.HashMap<>(course.getParticipantDisplayLabels())
-                : new java.util.HashMap<>();
+        if (course.getStudentEnrolledAt() != null) {
+            course.getStudentEnrolledAt().size();
+        }
+
+        Map<String, String> labels = course.getParticipantDisplayLabels() != null
+                ? new HashMap<>(course.getParticipantDisplayLabels())
+                : new HashMap<>();
+        Map<String, LocalDateTime> enrolledAt = course.getStudentEnrolledAt() != null
+                ? new HashMap<>(course.getStudentEnrolledAt())
+                : new HashMap<>();
+
         String instId = course.getInstructorId();
-        com.microservices.courseservice.dto.ParticipantSummaryDto instructor =
-                com.microservices.courseservice.dto.ParticipantSummaryDto.builder()
-                        .userId(instId)
-                        .displayLabel(labels.get(instId))
-                        .role("INSTRUCTOR")
-                        .build();
-        java.util.List<String> studs = course.getEnrolledStudents() != null
-                ? new java.util.ArrayList<>(course.getEnrolledStudents())
-                : new java.util.ArrayList<>();
+        List<String> studs = course.getEnrolledStudents() != null
+                ? new ArrayList<>(course.getEnrolledStudents())
+                : new ArrayList<>();
         studs.sort(String::compareTo);
-        java.util.List<com.microservices.courseservice.dto.ParticipantSummaryDto> studentRows = studs.stream()
-                .filter(sid -> instId == null || !sid.equals(instId))
-                .map(sid -> com.microservices.courseservice.dto.ParticipantSummaryDto.builder()
-                        .userId(sid)
-                        .displayLabel(labels.get(sid))
-                        .role("STUDENT")
-                        .build())
+
+        List<String> profileIds = new ArrayList<>();
+        if (instId != null && !instId.isBlank()) {
+            profileIds.add(instId);
+        }
+        for (String sid : studs) {
+            if (instId == null || !sid.equals(instId)) {
+                profileIds.add(sid);
+            }
+        }
+        Map<String, Map<String, Object>> profiles = resolveUserProfiles(profileIds);
+
+        List<Long> lessonIds = lessonRepository.findByCourseIdOrderByOrderNumber(courseId).stream()
+                .map(Lesson::getId)
+                .filter(Objects::nonNull)
                 .toList();
+        int totalLessons = lessonIds.size();
+
+        com.microservices.courseservice.dto.ParticipantSummaryDto instructor = instId != null
+                ? buildParticipantSummary(instId, "INSTRUCTOR", profiles, labels, enrolledAt, lessonIds, totalLessons)
+                : null;
+
+        List<com.microservices.courseservice.dto.ParticipantSummaryDto> studentRows = studs.stream()
+                .filter(sid -> instId == null || !sid.equals(instId))
+                .map(sid -> buildParticipantSummary(sid, "STUDENT", profiles, labels, enrolledAt, lessonIds, totalLessons))
+                .toList();
+
         return com.microservices.courseservice.dto.CourseParticipantsDto.builder()
                 .instructor(instructor)
                 .students(studentRows)
                 .studentCount(studentRows.size())
                 .build();
+    }
+
+    private Map<String, Map<String, Object>> resolveUserProfiles(List<String> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            List<Map<String, Object>> resolved = authServiceClient.resolveUsers(Map.of("userIds", userIds));
+            if (resolved == null || resolved.isEmpty()) {
+                return Map.of();
+            }
+            Map<String, Map<String, Object>> byId = new HashMap<>();
+            for (Map<String, Object> profile : resolved) {
+                if (profile == null) {
+                    continue;
+                }
+                Object id = profile.get("id");
+                if (id != null) {
+                    byId.put(id.toString(), profile);
+                }
+            }
+            return byId;
+        } catch (Exception ex) {
+            log.warn("Could not resolve participant profiles: {}", ex.getMessage());
+            return Map.of();
+        }
+    }
+
+    private com.microservices.courseservice.dto.ParticipantSummaryDto buildParticipantSummary(
+            String userId,
+            String role,
+            Map<String, Map<String, Object>> profiles,
+            Map<String, String> labels,
+            Map<String, LocalDateTime> enrolledAtMap,
+            List<Long> lessonIds,
+            int totalLessons) {
+        Map<String, Object> profile = profiles.get(userId);
+        String label = labels.get(userId);
+        String email = firstNonBlank(stringClaim(profile, "email"), emailFromDisplayLabel(label));
+        String fullName = firstNonBlank(
+                stringClaim(profile, "fullName"),
+                buildNameFromParts(stringClaim(profile, "firstName"), stringClaim(profile, "lastName")),
+                stringClaim(profile, "username"),
+                nameFromDisplayLabel(label)
+        );
+        if (fullName == null || fullName.isBlank()) {
+            fullName = email != null && email.contains("@") ? localPartBeforeAt(email) : "Participant";
+        }
+
+        String enrolledAt = null;
+        LocalDateTime enrolled = enrolledAtMap.get(userId);
+        if (enrolled != null) {
+            enrolledAt = enrolled.toString();
+        }
+
+        Integer progressPercent = null;
+        if ("STUDENT".equals(role) && totalLessons > 0) {
+            long completed = progressRepository.countByStudentIdAndLessonIdInAndCompletedTrue(userId, lessonIds);
+            progressPercent = (int) Math.round(100.0 * completed / totalLessons);
+        }
+
+        return com.microservices.courseservice.dto.ParticipantSummaryDto.builder()
+                .userId(userId)
+                .fullName(fullName)
+                .email(email)
+                .role(role)
+                .enrolledAt(enrolledAt)
+                .progressPercent(progressPercent)
+                .displayLabel(label)
+                .build();
+    }
+
+    private String stringClaim(Map<String, Object> map, String key) {
+        if (map == null || key == null) {
+            return null;
+        }
+        Object value = map.get(key);
+        return value != null ? value.toString().trim() : null;
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return null;
+    }
+
+    private String buildNameFromParts(String firstName, String lastName) {
+        StringBuilder sb = new StringBuilder();
+        if (firstName != null && !firstName.isBlank()) {
+            sb.append(firstName.trim());
+        }
+        if (lastName != null && !lastName.isBlank()) {
+            if (!sb.isEmpty()) {
+                sb.append(' ');
+            }
+            sb.append(lastName.trim());
+        }
+        return sb.isEmpty() ? null : sb.toString();
+    }
+
+    private String emailFromDisplayLabel(String label) {
+        if (label == null || label.isBlank()) {
+            return null;
+        }
+        String trimmed = label.trim();
+        return trimmed.contains("@") ? trimmed.toLowerCase() : null;
+    }
+
+    private String nameFromDisplayLabel(String label) {
+        if (label == null || label.isBlank()) {
+            return null;
+        }
+        String trimmed = label.trim();
+        if (trimmed.contains("@")) {
+            return humanizeLocalPart(localPartBeforeAt(trimmed));
+        }
+        return trimmed;
+    }
+
+    private String localPartBeforeAt(String email) {
+        if (email == null) {
+            return "";
+        }
+        int at = email.indexOf('@');
+        return at > 0 ? email.substring(0, at) : email;
+    }
+
+    private String humanizeLocalPart(String localPart) {
+        if (localPart == null || localPart.isBlank()) {
+            return null;
+        }
+        return localPart.replace('.', ' ').replace('_', ' ').trim();
     }
 
     @Transactional

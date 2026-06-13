@@ -79,6 +79,12 @@ public class Course {
     @Column(name = "display_label", length = 512)
     private Map<String, String> participantDisplayLabels = new HashMap<>();
 
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "course_student_enrollments", joinColumns = @JoinColumn(name = "course_id"))
+    @MapKeyColumn(name = "student_id", length = 255)
+    @Column(name = "enrolled_at")
+    private Map<String, LocalDateTime> studentEnrolledAt = new HashMap<>();
+
     @ElementCollection
     @CollectionTable(name = "course_allowed_emails", joinColumns = @JoinColumn(name = "course_id"))
     @Column(name = "email")
