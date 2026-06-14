@@ -357,6 +357,14 @@ public class CourseController {
         return courseService.updateTestSettings(testId, request.getMaxAttempts(), request.getDueAt(), jwt);
     }
 
+    @PutMapping("/tests/{testId}")
+    public com.microservices.courseservice.model.Test updateTest(
+            @PathVariable Long testId,
+            @RequestBody com.microservices.courseservice.dto.UpdateTestRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.updateTest(testId, request, jwt);
+    }
+
     @GetMapping("/{courseId}/test-results")
     public java.util.List<com.microservices.courseservice.dto.TestAttemptTeacherRowDto> getTestResults(
             @PathVariable Long courseId,

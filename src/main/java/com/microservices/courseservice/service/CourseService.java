@@ -11,6 +11,8 @@ import com.microservices.courseservice.dto.GenerateLessonsRequest;
 import com.microservices.courseservice.dto.GenerateLessonsResultDto;
 import com.microservices.courseservice.dto.GenerateTestRequest;
 import com.microservices.courseservice.dto.GenerateTestResultDto;
+import com.microservices.courseservice.dto.UpdateQuestionRequest;
+import com.microservices.courseservice.dto.UpdateTestRequest;
 import com.microservices.courseservice.dto.RagGenerationContext;
 import com.microservices.courseservice.dto.ai.GenerationUsageSummaryDto;
 import com.microservices.courseservice.dto.ai.RagLlmUsageDto;
@@ -1144,6 +1146,112 @@ public class CourseService {
                         .suspiciousFlag(ta.getSuspiciousFlag())
                         .build())
                 .toList();
+    }
+
+    @Transactional
+    public Test updateTest(Long testId, UpdateTestRequest request, Jwt jwt) {
+        Test test = requireTestEntity(testId);
+        Course course = test.getCourse();
+        validateCourseUpdatePermission(course, jwt);
+
+        if (request.getTitle() != null) {
+            String title = request.getTitle().trim();
+            if (title.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Test title is required");
+            }
+            test.setTitle(title);
+        }
+        if (request.getTitleKz() != null) {
+            test.setTitleKz(request.getTitleKz().trim());
+        }
+        if (request.getTitleEn() != null) {
+            test.setTitleEn(request.getTitleEn().trim());
+        }
+
+        Integer normalizedAttempts = request.getMaxAttempts();
+        if (normalizedAttempts != null && normalizedAttempts <= 0) {
+            normalizedAttempts = null;
+        }
+        test.setMaxAttempts(normalizedAttempts);
+
+        String dueAtRaw = request.getDueAt();
+        java.time.LocalDateTime dueAt = null;
+        if (dueAtRaw != null && !dueAtRaw.isBlank()) {
+            try {
+                dueAt = java.time.LocalDateTime.parse(dueAtRaw.trim());
+            } catch (Exception e) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid dueAt формат");
+            }
+        }
+        test.setDueAt(dueAt);
+
+        if (request.getQuestions() != null) {
+            if (request.getQuestions().isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "At least one question is required");
+            }
+            syncTestQuestions(test, request.getQuestions());
+        }
+
+        return testRepository.save(test);
+    }
+
+    private void syncTestQuestions(Test test, List<UpdateQuestionRequest> questionDtos) {
+        List<Question> existing = questionRepository.findByTestIdOrderByOrderNumber(test.getId());
+        Map<Long, Question> byId = existing.stream()
+                .filter(q -> q.getId() != null)
+                .collect(Collectors.toMap(Question::getId, q -> q, (a, b) -> a));
+
+        java.util.Set<Long> keptIds = new java.util.HashSet<>();
+        int order = 1;
+        for (UpdateQuestionRequest dto : questionDtos) {
+            Question question;
+            if (dto.getId() != null && byId.containsKey(dto.getId())) {
+                question = byId.get(dto.getId());
+                keptIds.add(question.getId());
+            } else {
+                question = new Question();
+                question.setTest(test);
+            }
+            applyQuestionUpdate(question, dto, order++);
+            qualityGate.validateQuestion(question);
+            questionRepository.save(question);
+        }
+
+        for (Question old : existing) {
+            if (old.getId() != null && !keptIds.contains(old.getId())) {
+                questionRepository.delete(old);
+            }
+        }
+    }
+
+    private void applyQuestionUpdate(Question question, UpdateQuestionRequest dto, int fallbackOrder) {
+        Question.QuestionType type = dto.getType() != null ? dto.getType() : Question.QuestionType.MULTIPLE_CHOICE;
+        question.setType(type);
+        question.setText(trimOrEmpty(dto.getText()));
+        question.setTextKz(trimToNull(dto.getTextKz()));
+        question.setTextEn(trimToNull(dto.getTextEn()));
+        question.setOptions(trimOrEmpty(dto.getOptions()));
+        question.setOptionsKz(trimToNull(dto.getOptionsKz()));
+        question.setOptionsEn(trimToNull(dto.getOptionsEn()));
+        question.setCorrectAnswer(trimOrEmpty(dto.getCorrectAnswer()));
+        question.setExplanation(trimToNull(dto.getExplanation()));
+        question.setHint(trimToNull(dto.getHint()));
+        question.setExplanationKz(trimToNull(dto.getExplanationKz()));
+        question.setExplanationEn(trimToNull(dto.getExplanationEn()));
+        question.setHintKz(trimToNull(dto.getHintKz()));
+        question.setHintEn(trimToNull(dto.getHintEn()));
+        Integer orderNumber = dto.getOrderNumber();
+        question.setOrderNumber(orderNumber != null && orderNumber > 0 ? orderNumber : fallbackOrder);
+    }
+
+    private static String trimOrEmpty(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     @Transactional
