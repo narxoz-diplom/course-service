@@ -20,6 +20,8 @@ public class ParticipantSummaryDto {
     private String enrolledAt;
     /** Course lesson completion percent 0–100. */
     private Integer progressPercent;
+    /** Public avatar URL path from auth-service, e.g. /api/files/{id}/content */
+    private String avatarUrl;
     /** @deprecated use fullName/email */
     @Deprecated
     private String displayLabel;

@@ -1390,6 +1390,7 @@ public class CourseService {
                 .enrolledAt(enrolledAt)
                 .progressPercent(progressPercent)
                 .displayLabel(label)
+                .avatarUrl(stringClaim(profile, "avatarUrl"))
                 .build();
     }
 
