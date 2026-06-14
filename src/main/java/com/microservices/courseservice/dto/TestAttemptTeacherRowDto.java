@@ -13,6 +13,9 @@ public class TestAttemptTeacherRowDto {
 
     private Long attemptId;
     private String studentId;
+    private String studentEmail;
+    private String studentName;
+    private String studentDisplayLabel;
     private Long testId;
     private String testTitle;
     private String testTitleKz;

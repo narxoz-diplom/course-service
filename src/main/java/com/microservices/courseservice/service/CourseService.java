@@ -334,7 +334,7 @@ public class CourseService {
         if (RoleUtil.isAdmin(jwt) || RoleUtil.isTeacher(jwt)) {
             return getAllCourses(jwt);
         }
-        return getAllPublishedCourses();
+        return getAccessibleCoursesForStudent(jwt);
     }
 
     private List<Course> getCoursesVisibleForMaterials(Jwt jwt) {
@@ -1109,16 +1109,44 @@ public class CourseService {
     public java.util.List<com.microservices.courseservice.dto.TestAttemptTeacherRowDto> getTestAttemptsByCourse(Long courseId, Jwt jwt) {
         Course course = getCourseById(courseId);
         validateCourseUpdatePermission(course, jwt);
-        return testAttemptRepository.findByCourseIdWithTest(courseId).stream()
-                .map(this::toTeacherTestRow)
+        java.util.List<TestAttempt> attempts = testAttemptRepository.findByCourseIdWithTest(courseId);
+        java.util.List<String> studentIds = attempts.stream()
+                .map(TestAttempt::getStudentId)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .distinct()
+                .toList();
+        Map<String, Map<String, Object>> profiles = resolveUserProfiles(studentIds);
+        Map<String, String> labels = course.getParticipantDisplayLabels() != null
+                ? course.getParticipantDisplayLabels()
+                : Map.of();
+        return attempts.stream()
+                .map(ta -> toTeacherTestRow(ta, profiles, labels))
                 .toList();
     }
 
-    private com.microservices.courseservice.dto.TestAttemptTeacherRowDto toTeacherTestRow(TestAttempt ta) {
+    private com.microservices.courseservice.dto.TestAttemptTeacherRowDto toTeacherTestRow(
+            TestAttempt ta,
+            Map<String, Map<String, Object>> profiles,
+            Map<String, String> labels) {
         Test t = ta.getTest();
+        String studentId = ta.getStudentId();
+        Map<String, Object> profile = studentId != null ? profiles.get(studentId) : null;
+        String label = studentId != null ? labels.get(studentId) : null;
+        String email = firstNonBlank(stringClaim(profile, "email"), emailFromDisplayLabel(label));
+        String fullName = firstNonBlank(
+                stringClaim(profile, "fullName"),
+                buildNameFromParts(stringClaim(profile, "firstName"), stringClaim(profile, "lastName")),
+                stringClaim(profile, "username"),
+                nameFromDisplayLabel(label)
+        );
         return com.microservices.courseservice.dto.TestAttemptTeacherRowDto.builder()
                 .attemptId(ta.getId())
-                .studentId(ta.getStudentId())
+                .studentId(studentId)
+                .studentEmail(email)
+                .studentName(fullName)
+                .studentDisplayLabel(label)
                 .testId(t != null ? t.getId() : null)
                 .testTitle(t != null ? t.getTitle() : null)
                 .testTitleKz(t != null ? t.getTitleKz() : null)
