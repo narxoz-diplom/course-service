@@ -1,5 +1,6 @@
 package com.microservices.courseservice.dto.ai.usage;
 
+import com.microservices.courseservice.dto.ai.TeacherAiLimitStatusDto;
 import lombok.Builder;
 import lombok.Data;
 
@@ -14,4 +15,6 @@ public class TeacherAiUsageReportDto {
     private List<AiUsageTimeSeriesPointDto> timeSeries;
     private List<AiUsageRecentRunDto> recentRuns;
     private List<AiQuotaUtilizationDto> quotaUtilization;
+    /** Per-teacher account quota (default limits + optional admin override). */
+    private TeacherAiLimitStatusDto userLimit;
 }

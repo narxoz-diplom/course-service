@@ -1,5 +1,6 @@
 package com.microservices.courseservice.service;
 
+import com.microservices.courseservice.dto.ai.TeacherAiLimitStatusDto;
 import com.microservices.courseservice.dto.ai.usage.TeacherAiUsageReportDto;
 import com.microservices.courseservice.repository.AiModelPolicyRepository;
 import com.microservices.courseservice.repository.AiModelRepository;
@@ -32,13 +33,18 @@ class AiUsageReportServiceTest {
     @Mock private AiModelRepository aiModelRepository;
     @Mock private AiModelPolicyRepository aiModelPolicyRepository;
     @Mock private AiQuotaService aiQuotaService;
+    @Mock private TeacherAiLimitService teacherAiLimitService;
 
     private AiUsageReportService service;
 
     @BeforeEach
     void setUp() {
         service = new AiUsageReportService(
-                reportRepository, aiModelRepository, aiModelPolicyRepository, aiQuotaService);
+                reportRepository,
+                aiModelRepository,
+                aiModelPolicyRepository,
+                aiQuotaService,
+                teacherAiLimitService);
     }
 
     @Test
@@ -58,6 +64,13 @@ class AiUsageReportServiceTest {
         when(reportRepository.recentRuns(any(), anyInt())).thenReturn(List.of());
         when(aiModelRepository.findAll()).thenReturn(List.of());
         when(aiModelPolicyRepository.findByAllowedRoleAndCapability(any(), any())).thenReturn(List.of());
+        when(teacherAiLimitService.statusForTeacher("teacher-1", false))
+                .thenReturn(TeacherAiLimitStatusDto.builder()
+                        .teacherId("teacher-1")
+                        .monthlyLimit(1_000_000L)
+                        .monthlyUsed(42_000L)
+                        .monthlyRemaining(958_000L)
+                        .build());
 
         TeacherAiUsageReportDto report = service.teacherUsage(teacherJwt, LocalDate.parse("2026-06-01"), LocalDate.parse("2026-06-30"));
 
@@ -65,6 +78,8 @@ class AiUsageReportServiceTest {
         assertThat(report.getSummary().getGenerationCount()).isEqualTo(3);
         assertThat(report.getSummary().getFailedCount()).isEqualTo(1);
         assertThat(report.getPeriod().getFrom()).isEqualTo(LocalDate.parse("2026-06-01"));
+        assertThat(report.getUserLimit().getMonthlyUsed()).isEqualTo(42_000L);
+        assertThat(report.getUserLimit().getMonthlyLimit()).isEqualTo(1_000_000L);
     }
 
     @Test

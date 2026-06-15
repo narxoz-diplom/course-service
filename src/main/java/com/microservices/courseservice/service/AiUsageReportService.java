@@ -49,6 +49,7 @@ public class AiUsageReportService {
     private final AiModelRepository aiModelRepository;
     private final AiModelPolicyRepository aiModelPolicyRepository;
     private final AiQuotaService aiQuotaService;
+    private final TeacherAiLimitService teacherAiLimitService;
 
     @Transactional(readOnly = true)
     public TeacherAiUsageReportDto teacherUsage(Jwt jwt, LocalDate from, LocalDate to) {
@@ -64,6 +65,7 @@ public class AiUsageReportService {
                 .timeSeries(buildTimeSeries(filter))
                 .recentRuns(buildRecentRuns(filter))
                 .quotaUtilization(buildQuotaUtilization(teacherId, "teacher"))
+                .userLimit(teacherAiLimitService.statusForTeacher(teacherId, RoleUtil.isAdmin(jwt)))
                 .build();
     }
 
