@@ -2,28 +2,13 @@ package com.microservices.courseservice.service;
 
 import com.microservices.courseservice.client.AuthServiceClient;
 import com.microservices.courseservice.client.FileServiceClient;
+import com.microservices.courseservice.client.FileStreamClient;
 import com.microservices.courseservice.client.RagClient;
-import com.microservices.courseservice.dto.AdminPlatformStatsDto;
-import com.microservices.courseservice.dto.CourseViewerResponse;
-import com.microservices.courseservice.dto.CourseOutlineResponse;
-import com.microservices.courseservice.dto.GenerateFromOutlineRequest;
-import com.microservices.courseservice.dto.GenerateLessonsRequest;
-import com.microservices.courseservice.dto.GenerateLessonsResultDto;
-import com.microservices.courseservice.dto.GenerateTestRequest;
-import com.microservices.courseservice.dto.GenerateTestResultDto;
-import com.microservices.courseservice.dto.UpdateQuestionRequest;
-import com.microservices.courseservice.dto.UpdateTestRequest;
-import com.microservices.courseservice.dto.RagGenerationContext;
+import com.microservices.courseservice.dto.*;
 import com.microservices.courseservice.dto.ai.GenerationUsageSummaryDto;
 import com.microservices.courseservice.dto.ai.RagLlmUsageDto;
 import com.microservices.courseservice.model.ai.GenerationRun;
 import com.microservices.courseservice.model.ai.GenerationType;
-import com.microservices.courseservice.dto.LessonGenerationParamsDto;
-import com.microservices.courseservice.dto.LessonOutlineItemDto;
-import com.microservices.courseservice.dto.RagLessonDto;
-import com.microservices.courseservice.dto.RagQuizQuestionDto;
-import com.microservices.courseservice.dto.SearchResultDto;
-import com.microservices.courseservice.dto.VideoMetadataRequest;
 import com.microservices.courseservice.event.CourseVectorCleanupEvent;
 import com.microservices.courseservice.exception.QualityGateException;
 import com.microservices.courseservice.mapper.CourseMapper;
@@ -43,6 +28,10 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -73,6 +62,7 @@ public class CourseService {
     private final VideoMapper videoMapper;
     private final AuthServiceClient authServiceClient;
     private final FileServiceClient fileServiceClient;
+    private final FileStreamClient fileStreamClient;
     private final RagClient ragClient;
     private final TestRepository testRepository;
     private final TestAttemptRepository testAttemptRepository;
@@ -992,6 +982,72 @@ public class CourseService {
         return lesson;
     }
 
+    @Transactional(readOnly = true)
+    public CourseProgressDto getCourseProgress(Long courseId, Jwt jwt) {
+        Course course = getCourseById(courseId);
+        assertCanViewCourseMaterials(course, jwt);
+        String studentId = jwt.getSubject();
+        List<Lesson> lessons = lessonService.getLessonsByCourse(courseId);
+        List<Long> lessonIds = lessons.stream().map(Lesson::getId).toList();
+
+        Map<Long, Progress> progressByLesson = lessonIds.isEmpty()
+                ? Map.of()
+                : progressRepository.findByStudentIdAndLessonIdIn(studentId, lessonIds).stream()
+                        .collect(Collectors.toMap(p -> p.getLesson().getId(), p -> p, (a, b) -> a));
+
+        List<LessonProgressItemDto> items = lessons.stream()
+                .map(lesson -> {
+                    Progress progress = progressByLesson.get(lesson.getId());
+                    boolean completed = progress != null && Boolean.TRUE.equals(progress.getCompleted());
+                    return LessonProgressItemDto.builder()
+                            .lessonId(lesson.getId())
+                            .completed(completed)
+                            .completedAt(completed && progress.getLastWatchedAt() != null
+                                    ? progress.getLastWatchedAt()
+                                    : null)
+                            .build();
+                })
+                .toList();
+
+        int completedCount = (int) items.stream().filter(LessonProgressItemDto::isCompleted).count();
+        int total = lessons.size();
+        int progressPercent = total > 0 ? (int) Math.round(100.0 * completedCount / total) : 0;
+
+        return CourseProgressDto.builder()
+                .courseId(courseId)
+                .totalLessons(total)
+                .completedLessons(completedCount)
+                .progressPercent(progressPercent)
+                .lessons(items)
+                .build();
+    }
+
+    @Transactional
+    public LessonProgressItemDto markLessonComplete(Long lessonId, Jwt jwt) {
+        Lesson lesson = lessonService.getLessonById(lessonId);
+        Course course = lesson.getCourse();
+        assertCanViewCourseMaterials(course, jwt);
+
+        String studentId = jwt.getSubject();
+        Progress progress = progressRepository.findByStudentIdAndLessonId(studentId, lessonId)
+                .orElseGet(() -> {
+                    Progress created = new Progress();
+                    created.setStudentId(studentId);
+                    created.setLesson(lesson);
+                    created.setCompleted(false);
+                    return created;
+                });
+        progress.setCompleted(true);
+        progress.setLastWatchedAt(LocalDateTime.now());
+        Progress saved = progressRepository.save(progress);
+
+        return LessonProgressItemDto.builder()
+                .lessonId(lessonId)
+                .completed(true)
+                .completedAt(saved.getLastWatchedAt())
+                .build();
+    }
+
     @Transactional
     public Lesson updateLesson(Long lessonId, Lesson lesson, Jwt jwt) {
         return lessonService.updateLesson(lessonId, lesson, jwt);
@@ -1020,6 +1076,27 @@ public class CourseService {
         Lesson lesson = lessonService.getLessonById(lessonId);
         assertCanViewCourseMaterials(lesson.getCourse(), jwt);
         return videoRepository.findByLessonIdOrderByOrderNumber(lessonId);
+    }
+
+    public void streamLessonVideo(
+            Long lessonId,
+            Long videoId,
+            Jwt jwt,
+            String rangeHeader,
+            HttpServletResponse servletResponse) throws IOException {
+        Video video = videoRepository.findById(videoId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Video not found"));
+        if (video.getLesson() == null || !video.getLesson().getId().equals(lessonId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Video not found");
+        }
+        assertCanViewCourseMaterials(video.getLesson().getCourse(), jwt);
+
+        String objectName = video.getObjectName();
+        if (objectName == null || objectName.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Video file not found");
+        }
+
+        fileStreamClient.streamVideo(objectName, rangeHeader, jwt.getTokenValue(), servletResponse);
     }
 
     @Transactional

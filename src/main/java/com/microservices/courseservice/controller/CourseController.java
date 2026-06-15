@@ -22,6 +22,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.util.List;
 
 @Slf4j
@@ -181,6 +183,21 @@ public class CourseController {
         return courseService.getLessonById(lessonId, jwt);
     }
 
+    @GetMapping("/{courseId}/progress")
+    public com.microservices.courseservice.dto.CourseProgressDto getCourseProgress(
+            @PathVariable Long courseId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.getCourseProgress(courseId, jwt);
+    }
+
+    @PostMapping("/lessons/{lessonId}/complete")
+    @ResponseStatus(HttpStatus.OK)
+    public com.microservices.courseservice.dto.LessonProgressItemDto markLessonComplete(
+            @PathVariable Long lessonId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return courseService.markLessonComplete(lessonId, jwt);
+    }
+
     @PutMapping("/lessons/{lessonId}")
     @ResponseStatus(HttpStatus.OK)
     public Lesson updateLesson(
@@ -212,6 +229,16 @@ public class CourseController {
             @PathVariable Long lessonId,
             @AuthenticationPrincipal Jwt jwt) {
         return courseService.getVideosByLesson(lessonId, jwt);
+    }
+
+    @GetMapping("/lessons/{lessonId}/videos/{videoId}/stream")
+    public void streamLessonVideo(
+            @PathVariable Long lessonId,
+            @PathVariable Long videoId,
+            @RequestHeader(value = "Range", required = false) String rangeHeader,
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletResponse servletResponse) throws IOException {
+        courseService.streamLessonVideo(lessonId, videoId, jwt, rangeHeader, servletResponse);
     }
 
     @DeleteMapping("/lessons/{lessonId}/videos/{videoId}")

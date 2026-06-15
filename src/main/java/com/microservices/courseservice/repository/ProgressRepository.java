@@ -12,6 +12,7 @@ import java.util.Optional;
 public interface ProgressRepository extends JpaRepository<Progress, Long> {
     List<Progress> findByStudentId(String studentId);
     Optional<Progress> findByStudentIdAndLessonId(String studentId, Long lessonId);
+    List<Progress> findByStudentIdAndLessonIdIn(String studentId, Collection<Long> lessonIds);
     Long countByStudentIdAndCompletedTrue(String studentId);
     long countByStudentIdAndLessonIdInAndCompletedTrue(String studentId, Collection<Long> lessonIds);
 }

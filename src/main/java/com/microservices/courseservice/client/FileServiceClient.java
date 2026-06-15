@@ -29,8 +29,10 @@ public interface FileServiceClient {
     @GetMapping("/api/files/course/{courseId}")
     java.util.List<Map<String, Object>> getFilesByCourseId(@PathVariable("courseId") Long courseId);
 
-    @GetMapping("/api/courses/videos/{objectName}/stream")
-    org.springframework.core.io.Resource streamVideo(@PathVariable("objectName") String objectName,
-                                                      @RequestHeader(value = "Range", required = false) String rangeHeader);
+    @GetMapping("/api/files/videos/stream")
+    org.springframework.core.io.Resource streamVideo(
+            @RequestParam("objectName") String objectName,
+            @RequestHeader(value = "Range", required = false) String rangeHeader,
+            @RequestHeader("Authorization") String authorization);
 }
 
